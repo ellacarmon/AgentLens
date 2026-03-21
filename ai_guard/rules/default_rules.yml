@@ -1,0 +1,47 @@
+rules:
+  - id: "CODE_DYNAMIC_EXECUTION"
+    category: "code_execution"
+    severity: "critical"
+    type: "ast_call_name"
+    target: 
+      - "exec"
+      - "eval"
+    description: "Detected use of dynamic string execution."
+
+  - id: "CODE_SHELL_EXECUTION"
+    category: "code_execution"
+    severity: "high"
+    type: "ast_subprocess_shell"
+    target: []
+    description: "Detected subprocess execution with shell=True."
+
+  - id: "CODE_SUBPROCESS"
+    category: "code_execution"
+    severity: "medium"
+    type: "ast_subprocess_noshell"
+    target: []
+    description: "Detected subprocess execution."
+
+  - id: "CODE_OS_SYSTEM"
+    category: "code_execution"
+    severity: "high"
+    type: "ast_call_attr"
+    target:
+      - "system"
+      - "popen"
+    module: "os"
+    description: "Detected OS command execution."
+
+  - id: "PROMPT_INJECTION_OVERRIDE"
+    category: "prompt_injection"
+    severity: "high"
+    type: "regex"
+    target: "(?i)(ignore previous instructions|system prompt:|you must now)"
+    description: "Detected instruction override attempt targeted at LLMs."
+
+  - id: "PROMPT_INJECTION_EXFIL"
+    category: "prompt_injection"
+    severity: "critical"
+    type: "regex"
+    target: "!\\[.*?\\]\\(https?://.*?\\?.*?\\)"
+    description: "Detected Markdown GET exfiltration link payloads."

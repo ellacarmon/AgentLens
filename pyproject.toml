@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-guard"
+version = "0.1.0"
+description = "Pre-Installation AI Agent Tool Risk Analyzer"
+dependencies = [
+    "click>=8.1.7",
+    "pydantic>=2.7.0",
+    "pyyaml>=6.0.1"
+]
+requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+authors = [
+    { name = "ai-guard contributors" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+    "Topic :: Security",
+]
+
+[project.urls]
+Homepage = "https://github.com/agentlens/ai-guard"
+Repository = "https://github.com/agentlens/ai-guard"
+
+[project.scripts]
+ai-guard = "ai_guard.cli:main"
