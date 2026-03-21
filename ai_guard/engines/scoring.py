@@ -20,7 +20,7 @@ class ScoringEngine:
             Severity.HIGH: float(weights.get('high', 5.0)),
             Severity.CRITICAL: float(weights.get('critical', 10.0))
         }
-        self.k_factor = float(config.get('k_factor', 0.25))
+        self.decay_factor = float(config.get('decay_factor', 0.58))
         
         thresholds = config.get('risk_thresholds', {})
         self.thresh_critical = float(thresholds.get('critical', 9.0))
@@ -29,7 +29,7 @@ class ScoringEngine:
         
         # Initialize Normalization Layer
         self.normalization_layer = NormalizationLayer(
-            k_factor=self.k_factor,
+            decay_factor=self.decay_factor,
             severity_weights=self.severity_weights
         )
         

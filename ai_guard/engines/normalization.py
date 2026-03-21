@@ -9,12 +9,12 @@ class NormalizationLayer:
     - Diminishing Returns (Exponential Decay function)
     - Weighted Aggregation across disparate categories
     """
-    def __init__(self, k_factor: float, severity_weights: Dict[str, float]):
-        self.k_factor = k_factor
+    def __init__(self, decay_factor: float, severity_weights: Dict[str, float]):
+        self.decay_factor = decay_factor
         self.severity_weights = severity_weights
 
     def apply_diminishing_returns(self, findings: List[Finding]) -> Dict[str, float]:
-        """Calculates category scores using exponential decay and explicit caps."""
+        """Calculates category scores using geometric decay based on severity sorting."""
         categories_breakdown: Dict[str, float] = {cat.value: 0.0 for cat in Category}
         
         grouped_findings: Dict[Category, List[Finding]] = {cat: [] for cat in Category}
@@ -22,13 +22,19 @@ class NormalizationLayer:
             grouped_findings[finding.category].append(finding)
             
         for cat, cats_findings in grouped_findings.items():
-            impact_sum = 0.0
-            for f in cats_findings:
+            # Sort findings by effective impact (highest first)
+            cats_findings.sort(
+                key=lambda f: self.severity_weights.get(f.severity, 0.0) * getattr(f, 'confidence', 1.0),
+                reverse=True
+            )
+            
+            score_c = 0.0
+            for i, f in enumerate(cats_findings):
                 weight = self.severity_weights.get(f.severity, 0.0)
-                impact_sum += weight * getattr(f, 'confidence', 1.0)
+                impact = weight * getattr(f, 'confidence', 1.0)
                 
-            # Score limit asymptotes to 10 based on formula 10 * (1 - e^(-k * sum(I)))
-            score_c = 10.0 * (1.0 - math.exp(-self.k_factor * impact_sum))
+                # Geometric decay: Impact * (decay_factor ^ i)
+                score_c += impact * (self.decay_factor ** i)
             
             # Explicit Caps per category
             categories_breakdown[cat.value] = round(min(10.0, score_c), 2)

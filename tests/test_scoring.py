@@ -30,12 +30,14 @@ class TestScoringEngine(unittest.TestCase):
         self.assertLessEqual(categories[Category.CODE_EXECUTION.value], 10.0)
 
     def test_mild_findings_yield_medium_risk(self):
-        # 2 MEDIUM findings should trigger MEDIUM risk (>=4.0 and <7.0)
+        # 3 MEDIUM findings should trigger MEDIUM risk (>=4.0 and <7.0)
         findings = [
             Finding(rule_id="r1", category=Category.FILESYSTEM_ACCESS, severity=Severity.MEDIUM, 
                     file_path="f.py", description="fs", confidence=1.0),
             Finding(rule_id="r2", category=Category.FILESYSTEM_ACCESS, severity=Severity.MEDIUM, 
-                    file_path="g.py", description="fs", confidence=1.0)
+                    file_path="g.py", description="fs", confidence=1.0),
+            Finding(rule_id="r3", category=Category.FILESYSTEM_ACCESS, severity=Severity.MEDIUM, 
+                    file_path="h.py", description="fs", confidence=1.0)
         ]
         risk_score, risk_level, rec, _, _, _, _ = self.engine.calculate(findings)
         self.assertGreaterEqual(risk_score, 4.0)

@@ -1,0 +1,8 @@
+safe:
+  - "https://github.com/psf/requests"
+  
+medium:
+  - "https://github.com/K-Dense-AI/claude-scientific-skills"
+
+malicious:
+  - "./calibration/synthetic_malicious"
