@@ -30,7 +30,8 @@ class SecurityNodeVisitor(ast.NodeVisitor):
                         file_path=self.filename,
                         line_number=node.lineno,
                         description=f"{rule.description} Target: '{func_name}()'",
-                        evidence=ast.unparse(node) if hasattr(ast, 'unparse') else None
+                        evidence=ast.unparse(node) if hasattr(ast, 'unparse') else None,
+                        confidence=getattr(rule, 'confidence_base', 1.0)
                     ))
         # Methods on imported modules e.g subprocess.Popen()
         elif isinstance(node.func, ast.Attribute):
@@ -48,7 +49,8 @@ class SecurityNodeVisitor(ast.NodeVisitor):
                             file_path=self.filename,
                             line_number=node.lineno,
                             description=f"{rule.description} Target: '{module_name}.{attr_name}()'",
-                            evidence=ast.unparse(node) if hasattr(ast, 'unparse') else None
+                            evidence=ast.unparse(node) if hasattr(ast, 'unparse') else None,
+                            confidence=getattr(rule, 'confidence_base', 0.8)  # Slightly lower confidence for abstract module matches
                         ))
 
                 if module_name == 'subprocess' and attr_name in ['Popen', 'run', 'call', 'check_call', 'check_output']:
@@ -70,7 +72,8 @@ class SecurityNodeVisitor(ast.NodeVisitor):
                             file_path=self.filename,
                             line_number=node.lineno,
                             description=f"{rule.description} Target: 'subprocess.{attr_name}()' (shell={is_shell})",
-                            evidence=ast.unparse(node) if hasattr(ast, 'unparse') else None
+                            evidence=ast.unparse(node) if hasattr(ast, 'unparse') else None,
+                            confidence=1.0 if is_shell else getattr(rule, 'confidence_base', 0.9)
                         ))
         
         # Traverse children natively

@@ -34,6 +34,12 @@ class PromptAnalyzer(BaseAnalyzer):
                                 snippet_context = content[max(0, match.start()-30):min(len(content), match.end()+30)]
                                 line_num = content.count('\\n', 0, match.start()) + 1
                                 
+                                conf = getattr(rule, 'confidence_base', 1.0)
+                                if ext == '.md' or file.upper() in ['README', 'SKILL']:
+                                    if rule.category == Category.PROMPT_INJECTION:
+                                        # Likely benign documentation
+                                        conf = 0.2
+                                        
                                 findings.append(Finding(
                                     rule_id=rule.id,
                                     severity=rule.severity,
@@ -41,7 +47,8 @@ class PromptAnalyzer(BaseAnalyzer):
                                     file_path=relative_path,
                                     line_number=line_num,
                                     description=rule.description,
-                                    evidence=snippet_context.strip().replace('\\n', ' ')
+                                    evidence=snippet_context.strip().replace('\\n', ' '),
+                                    confidence=conf
                                 ))
                     except Exception:
                         continue

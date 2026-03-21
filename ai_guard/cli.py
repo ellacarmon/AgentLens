@@ -56,11 +56,13 @@ def scan(ctx, target, json_output, fail_on_risk, rules_dir, policy):
         # Phase 3: Deterministic Scoring Engine
         from .engines.scoring import ScoringEngine
         scoring_engine = ScoringEngine()
-        risk_score, confidence, categories, normalized_conts, top_findings = scoring_engine.calculate(findings)
+        risk_score, risk_level, recommendation, confidence, categories, normalized_conts, top_findings = scoring_engine.calculate(findings)
         
         # Build Report
         mock_report = Report(
             risk_score=risk_score,
+            risk_level=risk_level,
+            recommendation=recommendation,
             confidence=confidence,
             summary=f"Analysis of {files_count} files complete. Found {len(findings)} risks.",
             categories=categories,
@@ -79,6 +81,10 @@ def scan(ctx, target, json_output, fail_on_risk, rules_dir, policy):
             click.echo(f"Staged at: {staging_path}")
             click.echo(f"Total Files: {files_count}")
             click.echo(f"Risk Score: {mock_report.risk_score}/10.0")
+            risk_color = "red" if mock_report.risk_level in ["HIGH", "CRITICAL"] else "yellow" if mock_report.risk_level == "MEDIUM" else "green"
+            click.echo(f"Risk Level: {click.style(mock_report.risk_level, fg=risk_color, bold=True)}")
+            rec_color = "red" if mock_report.recommendation == "BLOCK" else "yellow" if mock_report.recommendation == "WARN" else "green"
+            click.echo(f"Recommendation: {click.style(mock_report.recommendation, fg=rec_color, bold=True)}")
             click.echo(f"Summary: {mock_report.summary}")
         
         # Policy threshold evaluation

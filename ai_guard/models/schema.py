@@ -23,9 +23,12 @@ class Finding(BaseModel):
     line_number: Optional[int] = None
     description: str
     evidence: Optional[str] = None
+    confidence: float = 1.0
 
 class Report(BaseModel):
     risk_score: float = Field(default=0.0, ge=0.0, le=10.0)
+    risk_level: str
+    recommendation: str
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     summary: str
     categories: Dict[str, float]

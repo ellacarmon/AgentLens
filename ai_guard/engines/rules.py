@@ -12,6 +12,7 @@ class RuleDefinition(BaseModel):
     target: Union[List[str], str]
     module: Optional[str] = None
     description: str
+    confidence_base: float = 1.0
 
 class RuleEngine:
     def __init__(self, rules_path: Optional[str] = None):
