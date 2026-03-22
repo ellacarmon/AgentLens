@@ -13,9 +13,11 @@ class TestScoringEngine(unittest.TestCase):
                     file_path="f.py", description="eval", confidence=1.0)
         ]
         risk_score, risk_level, rec, conf, cats, _, _, features = self.engine.calculate(findings)
+        # eval() triggers has_dynamic_exec(8) + execution_complexity=critical(9) → max = 9.0
         self.assertTrue(features["has_dynamic_exec"])
-        self.assertEqual(cats["code_execution"], 8.0)
-        self.assertGreaterEqual(risk_score, 7.0)
+        self.assertEqual(features["execution_complexity"], "critical")
+        self.assertEqual(cats["code_execution"], 9.0)
+        self.assertGreaterEqual(risk_score, 8.0)
         self.assertIn(risk_level, ["HIGH", "CRITICAL"])
         self.assertEqual(rec, "BLOCK")
 
@@ -54,10 +56,10 @@ class TestScoringEngine(unittest.TestCase):
                     file_path="g.md", description="exfil", confidence=1.0),
         ]
         risk_score, risk_level, _, _, cats, _, _, _ = self.engine.calculate(findings)
+        # prompt_exfil triggers prompt_injection_severity=critical → 9.0
         self.assertEqual(cats["code_execution"], 7.0)
-        self.assertEqual(cats["prompt_injection"], 8.0)
-        # Combined should be > either individual
-        self.assertGreater(risk_score, 8.0)
+        self.assertEqual(cats["prompt_injection"], 9.0)
+        self.assertGreater(risk_score, 9.0)
 
 if __name__ == '__main__':
     unittest.main()

@@ -5,33 +5,42 @@ from ..models.schema import Category
 class NormalizationLayer:
     """
     Feature-driven normalization:
-    - Category score = max of triggered feature scores (not sum of findings)
+    - Category score = max of triggered feature scores (quantity-independent)
+    - Supports bool, count, and string (key=value) feature matching
     - Caps per category (max 10.0)
     - Probabilistic OR aggregation across categories
     """
     def __init__(self, feature_scores: Dict[str, Dict[str, float]]):
         self.feature_scores = feature_scores
 
-    def compute_category_scores(self, features: Dict[str, Union[bool, int]]) -> Dict[str, float]:
+    def compute_category_scores(self, features: Dict[str, Union[bool, int, str]]) -> Dict[str, float]:
         """
-        Derive category scores purely from extracted features.
+        Derive category scores from extracted features.
         
-        For each category, look up which features are active and take the MAX
-        of their configured scores. This makes scoring quantity-independent:
-        1 exec or 50 execs → same category score.
+        Supports three feature types in the YAML mapping:
+        - Boolean:  "has_exec" → True/False
+        - Count:    "prompt_override_patterns" → int > 0
+        - String:   "execution_complexity=critical" → matched against feature value
         """
         categories_breakdown: Dict[str, float] = {cat.value: 0.0 for cat in Category}
         
         for category, feature_map in self.feature_scores.items():
             triggered_scores = []
+            
             for feature_key, score_value in feature_map.items():
-                feat_val = features.get(feature_key, False)
-                # Feature is active if bool=True or count > 0
-                if feat_val and feat_val is not False:
-                    triggered_scores.append(float(score_value))
+                # String feature: "key=value" syntax
+                if "=" in feature_key:
+                    feat_name, expected_val = feature_key.split("=", 1)
+                    actual_val = features.get(feat_name, "none")
+                    if str(actual_val) == expected_val:
+                        triggered_scores.append(float(score_value))
+                else:
+                    # Bool or Count feature
+                    feat_val = features.get(feature_key, False)
+                    if feat_val and feat_val is not False:
+                        triggered_scores.append(float(score_value))
             
             if triggered_scores:
-                # Max-based: category score = highest triggered feature score
                 categories_breakdown[category] = round(min(10.0, max(triggered_scores)), 2)
                 
         return categories_breakdown

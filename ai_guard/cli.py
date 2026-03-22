@@ -97,11 +97,16 @@ def scan(ctx, target, json_output, fail_on_risk, rules_dir, policy, scoring_conf
                     click.echo(f"  - {cat}: {score}/10.0")
             
             # Print extracted features
-            active_features = {k: v for k, v in mock_report.features.items() if v}
+            active_features = {k: v for k, v in mock_report.features.items() if v and v != "none"}
             if active_features:
                 click.echo(click.style("\nExtracted Features:", bold=True))
                 for feat, val in active_features.items():
-                    display = val if isinstance(val, int) else "✓"
+                    if isinstance(val, bool):
+                        display = "✓"
+                    elif isinstance(val, int):
+                        display = str(val)
+                    else:
+                        display = val
                     click.echo(f"  - {feat}: {display}")
         
         # Policy threshold evaluation

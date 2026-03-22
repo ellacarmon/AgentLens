@@ -34,6 +34,6 @@ class Report(BaseModel):
     categories: Dict[str, float]
     normalized_contributions: Dict[str, float]
     top_findings: List[Finding]
-    features: Dict[str, Union[bool, int]] = {}
+    features: Dict[str, Union[bool, int, str]] = {}
     capabilities: List[str]
     findings: List[Finding]
