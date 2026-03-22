@@ -15,13 +15,12 @@ risk_thresholds:
 # Category score = max of all triggered feature scores
 feature_scores:
   code_execution:
-    has_dynamic_exec: 8.0
-    has_shell_exec: 7.0
-    has_os_command: 6.0
-    has_subprocess: 3.0
-    "execution_complexity=critical": 9.0
-    "execution_complexity=high": 7.0
-    "execution_complexity=low": 3.0
+    "execution_type=remote_execution": 9.0
+    "execution_type=dynamic_eval": 8.0
+    "execution_type=shell_execution": 7.0
+    "execution_type=subprocess": 4.0
+    "execution_type=safe_runtime_execution": 2.0
+    "is_framework=True": 0.0
     # Signal strength overrides
     "execution_signal=strong": 8.0
     "execution_signal=medium": 5.0

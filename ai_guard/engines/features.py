@@ -56,8 +56,11 @@ class FeatureExtractor:
         Severity.LOW: 0.5,
     }
 
-    def extract(self, findings: List[Finding]) -> Dict[str, Union[bool, int, str]]:
+    def extract(self, findings: List[Finding], context: Dict = None) -> Dict[str, Union[bool, int, str]]:
         """Transform raw findings into a structured feature dictionary."""
+        if context is None:
+            context = {}
+            
         features: Dict[str, Union[bool, int, str]] = {}
         
         # --- Tier 1: Primitive features (bool only, no raw counts) ---
@@ -75,20 +78,47 @@ class FeatureExtractor:
         features["high_confidence_count"] = sum(1 for f in findings if getattr(f, 'confidence', 1.0) >= 0.8)
         features["unique_files_affected"] = len(set(f.file_path for f in findings))
         
+        # Push context signals into features
+        features["is_framework"] = context.get("is_framework", False)
+        features["is_library"] = context.get("is_library", False)
+        features["exec_exposed_to_user"] = context.get("exec_exposed_to_user", True)
+        
         # --- Tier 2: Derived signal strength features ---
+        features["execution_type"] = self._derive_execution_type(features, context)
+        # Note: maintaining execution_complexity for backward-compatibility with tests / UI if needed,
+        # but execution_type is the new driving feature.
         features["execution_complexity"] = self._derive_complexity(
             features, self.EXEC_SEVERITY_LADDER
         )
         features["execution_signal"] = self._derive_signal_strength(
             findings, Category.CODE_EXECUTION
         )
+        if features.get("execution_type") == "safe_runtime_execution":
+            features["execution_signal"] = "weak"
+            features["execution_complexity"] = "low"
+            
         features["injection_signal"] = self._derive_signal_strength(
             findings, Category.PROMPT_INJECTION
         )
         features["file_spread"] = self._derive_spread(features)
         
         return features
-    
+
+    def _derive_execution_type(self, features: Dict, context: Dict) -> str:
+        base_type = "none"
+        if features.get("has_dynamic_exec"):
+            base_type = "dynamic_eval"
+        elif features.get("has_shell_exec") or features.get("has_os_command"):
+            base_type = "shell_execution"
+        elif features.get("has_subprocess"):
+            base_type = "subprocess"
+            
+        if base_type != "none":
+            if context.get("is_framework", False):
+                if base_type == "dynamic_eval":
+                    return "safe_runtime_execution"
+        return base_type
+
     def _derive_complexity(
         self, features: Dict, ladder: list
     ) -> str:

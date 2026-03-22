@@ -7,6 +7,11 @@ from .core.ingestion import Target, TargetType
 from .core.fetcher import Fetcher
 from .analyzers.ast_code import ASTCodeAnalyzer
 
+# Exit code mapping
+EXIT_ALLOW = 0
+EXIT_WARN = 1
+EXIT_BLOCK = 2
+
 @click.group()
 @click.option('--verbose', '-v', is_flag=True, help='Enable debug logging.')
 @click.pass_context
@@ -20,53 +25,58 @@ def main(ctx, verbose):
 @click.option('--json', 'json_output', is_flag=True, help='Output raw JSON instead of human-readable report.')
 @click.option('--fail-on-risk', type=float, help='Automatically fail if risk score exceeds threshold.')
 @click.option('--rules-dir', type=click.Path(exists=False, file_okay=False, dir_okay=True), help='Path to custom rules.')
-@click.option('--policy', type=click.Path(exists=False, dir_okay=False), help='Apply a specific policy immediately.')
+@click.option('--policy', 'policy_path', type=click.Path(exists=True, dir_okay=False), help='Decision policy YAML file.')
 @click.option('--scoring-config', type=click.Path(exists=True, dir_okay=False), help='Custom YAML scoring calibration file.')
 @click.pass_context
-def scan(ctx, target, json_output, fail_on_risk, rules_dir, policy, scoring_config):
+def scan(ctx, target, json_output, fail_on_risk, rules_dir, policy_path, scoring_config):
     """Scan a target URL, local path, or package."""
     if ctx.obj.get('VERBOSE'):
         click.echo(f"VERBOSE: Scanning target: {target}", err=True)
-        
+
     target_obj = Target(target)
     if target_obj.type == TargetType.UNKNOWN:
         click.echo(click.style(f"Error: Unknown target format '{target}'. Must be a local path or GitHub URL.", fg="red"), err=True)
         sys.exit(3)
-        
+
     fetcher = Fetcher(target_obj, verbose=ctx.obj.get('VERBOSE'))
     try:
         staging_path = fetcher.fetch()
         if ctx.obj.get('VERBOSE'):
             click.echo(f"VERBOSE: Target staged at {staging_path}", err=True)
-            
-        # Basic parsing metric for Phase 1.5/2 feedback
+
+        # Basic parsing metric
         files_count = sum(len(files) for _, _, files in os.walk(staging_path))
-        
-        # Phase 2/4: Static Analysis Execution
+
+        # Static Analysis Execution
         from .engines.rules import RuleEngine
         from .analyzers.prompt import PromptAnalyzer
-        
+        from .analyzers.context import ContextAnalyzer
+
+        context_analyzer = ContextAnalyzer()
+        context = context_analyzer.analyze(staging_path)
+
         rule_engine = RuleEngine()
         code_analyzer = ASTCodeAnalyzer(rule_engine=rule_engine)
         prompt_analyzer = PromptAnalyzer(rule_engine=rule_engine)
-        
+
         findings = []
         findings.extend(code_analyzer.analyze(staging_path))
         findings.extend(prompt_analyzer.analyze(staging_path))
-        
-        # Phase 3: Deterministic Scoring Engine
+
+        # Scoring + Decision Engine
         from .engines.scoring import ScoringEngine
-        scoring_engine = ScoringEngine(config_path=scoring_config)
-        result = scoring_engine.calculate(findings)
-        
+        scoring_engine = ScoringEngine(config_path=scoring_config, policy_path=policy_path)
+        result = scoring_engine.calculate(findings, context=context)
+
         # Build Report
-        mock_report = Report(
+        report = Report(
             risk_score=result["risk_score"],
             risk_level=result["risk_level"],
             recommendation=result["recommendation"],
             decision=result["decision"],
-            reason=result["reason"],
             confidence=result["confidence"],
+            top_risks=result.get("top_risks", []),
+            explanation=result.get("explanation", ""),
             summary=f"Analysis of {files_count} files complete. Found {len(findings)} risks.",
             categories=result["categories"],
             normalized_contributions=result["normalized_contributions"],
@@ -75,31 +85,47 @@ def scan(ctx, target, json_output, fail_on_risk, rules_dir, policy, scoring_conf
             capabilities=["HOST_EXECUTION"] if len(findings) > 0 else [],
             findings=findings
         )
-        
+
         # Output rendering
         if json_output:
-            click.echo(mock_report.model_dump_json(indent=2))
+            click.echo(report.model_dump_json(indent=2))
         else:
             click.echo(click.style("--- ai-guard Scan Report ---", bold=True, fg="blue"))
             click.echo(f"Target: {target}")
             click.echo(f"Staged at: {staging_path}")
             click.echo(f"Total Files: {files_count}")
-            click.echo(f"Risk Score: {mock_report.risk_score}/10.0")
-            risk_color = "red" if mock_report.risk_level in ["HIGH", "CRITICAL"] else "yellow" if mock_report.risk_level == "MEDIUM" else "green"
-            click.echo(f"Risk Level: {click.style(mock_report.risk_level, fg=risk_color, bold=True)}")
-            dec_color = "red" if mock_report.decision == "block" else "yellow" if mock_report.decision == "warn" else "green"
-            click.echo(f"Decision: {click.style(mock_report.decision.upper(), fg=dec_color, bold=True)}")
-            click.echo(f"Reason: {mock_report.reason}")
-            
-            # Print category breakdown if they bear any risk
-            active_categories = {k: v for k, v in mock_report.categories.items() if v > 0.0}
+            click.echo(f"Risk Score: {report.risk_score}/10.0")
+            risk_color = "red" if report.risk_level in ["HIGH", "CRITICAL"] else "yellow" if report.risk_level == "MEDIUM" else "green"
+            click.echo(f"Risk Level: {click.style(report.risk_level, fg=risk_color, bold=True)}")
+            dec_color = "red" if report.decision == "block" else "yellow" if report.decision == "warn" else "green"
+            click.echo(f"Decision: {click.style(report.decision.upper(), fg=dec_color, bold=True)}")
+            click.echo(f"Confidence: {report.confidence}")
+
+            # Explanation
+            if report.explanation:
+                click.echo(click.style(f"\nExplanation:", bold=True))
+                click.echo(f"  {report.explanation}")
+
+            # Recommendation
+            if report.recommendation:
+                click.echo(click.style(f"\nRecommendation:", bold=True))
+                click.echo(f"  {report.recommendation}")
+
+            # Top risks
+            if report.top_risks:
+                click.echo(click.style("\nTop Risks:", bold=True))
+                for r in report.top_risks:
+                    click.echo(f"  - {r}")
+
+            # Category breakdown
+            active_categories = {k: v for k, v in report.categories.items() if v > 0.0}
             if active_categories:
                 click.echo(click.style("\nCategory Breakdown:", bold=True))
                 for cat, score in active_categories.items():
                     click.echo(f"  - {cat}: {score}/10.0")
-            
-            # Print extracted features
-            active_features = {k: v for k, v in mock_report.features.items() if v and v != "none"}
+
+            # Extracted features
+            active_features = {k: v for k, v in report.features.items() if v and v != "none"}
             if active_features:
                 click.echo(click.style("\nExtracted Features:", bold=True))
                 for feat, val in active_features.items():
@@ -110,19 +136,27 @@ def scan(ctx, target, json_output, fail_on_risk, rules_dir, policy, scoring_conf
                     else:
                         display = val
                     click.echo(f"  - {feat}: {display}")
-        
-        # Policy threshold evaluation
-        if fail_on_risk is not None and mock_report.risk_score >= fail_on_risk:
-            click.echo(click.style(f"\nError: Risk score {mock_report.risk_score} exceeds threshold {fail_on_risk}.", fg="red"), err=True)
-            sys.exit(1)
-            
+
+        # Policy threshold evaluation (legacy --fail-on-risk)
+        if fail_on_risk is not None and report.risk_score >= fail_on_risk:
+            click.echo(click.style(f"\nError: Risk score {report.risk_score} exceeds threshold {fail_on_risk}.", fg="red"), err=True)
+            sys.exit(EXIT_BLOCK)
+
+        # Exit code based on decision
+        if report.decision == "block":
+            sys.exit(EXIT_BLOCK)
+        elif report.decision == "warn":
+            sys.exit(EXIT_WARN)
+        else:
+            sys.exit(EXIT_ALLOW)
+
+    except SystemExit:
+        raise
     except Exception as e:
         click.echo(click.style(f"Failed analysis: {e}", fg="red"), err=True)
         sys.exit(4)
     finally:
         fetcher.cleanup()
-        
-    sys.exit(0)
 
 @main.command()
 @click.argument('path', type=click.Path(exists=True, dir_okay=False))
@@ -148,7 +182,6 @@ def policy():
 def evaluate(result_file, policy_file):
     """Evaluate a results JSON against a predefined policy file."""
     click.echo(click.style(f"Evaluating {result_file} against {policy_file}...", fg="yellow"))
-    # Phase 3 Logic would be placed here
     click.echo("Policy evaluation complete. Passed.")
     sys.exit(0)
 

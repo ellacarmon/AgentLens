@@ -14,10 +14,10 @@ class TestScoringEngine(unittest.TestCase):
         result = self.engine.calculate(findings)
         self.assertTrue(result["features"]["has_dynamic_exec"])
         self.assertEqual(result["features"]["execution_complexity"], "critical")
-        self.assertEqual(result["categories"]["code_execution"], 9.0)
+        self.assertEqual(result["categories"]["code_execution"], 8.0)
         self.assertGreaterEqual(result["risk_score"], 8.0)
         self.assertIn(result["decision"], ["block"])
-        self.assertIn("code execution", result["reason"])
+        self.assertIn("code execution", result["explanation"])
 
     def test_quantity_independence(self):
         single = [
@@ -39,11 +39,11 @@ class TestScoringEngine(unittest.TestCase):
                     file_path="f.py", description="subprocess.run", confidence=1.0)
         ]
         result = self.engine.calculate(findings)
-        self.assertEqual(result["categories"]["code_execution"], 3.0)
-        self.assertEqual(result["decision"], "allow")
-        self.assertIn("Minor", result["reason"])
+        self.assertEqual(result["categories"]["code_execution"], 4.0)
+        self.assertEqual(result["decision"], "warn")
+        self.assertIn("warn threshold", result["explanation"].lower())
 
-    def test_decision_reason_is_generated(self):
+    def test_decision_explanation_is_generated(self):
         findings = [
             Finding(rule_id="CODE_SHELL_EXECUTION", category=Category.CODE_EXECUTION, severity=Severity.HIGH, 
                     file_path="f.py", description="shell", confidence=1.0),
@@ -52,8 +52,20 @@ class TestScoringEngine(unittest.TestCase):
         ]
         result = self.engine.calculate(findings)
         self.assertEqual(result["decision"], "block")
-        self.assertIn("prompt injection", result["reason"])
-        self.assertTrue(len(result["reason"]) > 10)
+        self.assertIn("prompt injection", result["explanation"].lower())
+        self.assertTrue(len(result["explanation"]) > 10)
+
+    def test_result_contains_new_fields(self):
+        findings = [
+            Finding(rule_id="CODE_SUBPROCESS", category=Category.CODE_EXECUTION, severity=Severity.MEDIUM,
+                    file_path="f.py", description="subprocess.run", confidence=1.0)
+        ]
+        result = self.engine.calculate(findings)
+        self.assertIn("top_risks", result)
+        self.assertIn("explanation", result)
+        self.assertIn("recommendation", result)
+        self.assertIn("confidence", result)
+        self.assertIsInstance(result["top_risks"], list)
 
 if __name__ == '__main__':
     unittest.main()

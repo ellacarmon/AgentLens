@@ -1,20 +1,21 @@
 import os
 import yaml
-from typing import List, Dict, Tuple
+from typing import List, Dict
 from ..models.schema import Finding, Category, Severity
 from .normalization import NormalizationLayer
 from .features import FeatureExtractor
 from .decision import DecisionEngine
 
+
 class ScoringEngine:
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str = None, policy_path: str = None):
         if config_path is None:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             config_path = os.path.join(base_dir, 'rules', 'scoring.yml')
-            
+
         with open(config_path, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
-            
+
         weights = config.get('severity_weights', {})
         self.severity_weights = {
             Severity.LOW: float(weights.get('low', 1.0)),
@@ -22,45 +23,34 @@ class ScoringEngine:
             Severity.HIGH: float(weights.get('high', 5.0)),
             Severity.CRITICAL: float(weights.get('critical', 10.0))
         }
-        
-        thresholds = config.get('risk_thresholds', {})
-        self.thresh_critical = float(thresholds.get('critical', 9.0))
-        self.thresh_high = float(thresholds.get('high', 7.0))
-        self.thresh_medium = float(thresholds.get('medium', 4.0))
-        
+
         # Feature-driven Normalization Layer
         feature_scores = config.get('feature_scores', {})
         self.normalization_layer = NormalizationLayer(feature_scores=feature_scores)
-        self.decision_engine = DecisionEngine()
-        
-    def calculate(self, findings: List[Finding]) -> Dict:
-        
+        self.decision_engine = DecisionEngine(policy_path=policy_path)
+
+    def calculate(self, findings: List[Finding], context: Dict = None) -> Dict:
+        if context is None:
+            context = {}
+
         # Step 0: Feature Abstraction Layer — findings → features
         feature_extractor = FeatureExtractor()
-        features = feature_extractor.extract(findings)
-        
+        features = feature_extractor.extract(findings, context=context)
+
         # Step 1: Feature-driven category scoring (quantity-independent)
         categories_breakdown = self.normalization_layer.compute_category_scores(features)
 
         # Step 2: Probabilistic OR aggregation across categories
         risk_score = self.normalization_layer.aggregate_weighted_scores(categories_breakdown)
-        
-        # Step 3: Decision Layer — risk score + features → decision + reason
-        decision = self.decision_engine.evaluate(
+
+        # Step 3: Decision Engine — multi-signal decision with policy
+        decision_result = self.decision_engine.evaluate(
             risk_score=risk_score,
             categories=categories_breakdown,
             features=features,
-            thresh_medium=self.thresh_medium,
-            thresh_high=self.thresh_high,
-            thresh_critical=self.thresh_critical,
+            findings=findings,
         )
-        
-        # Calculate Confidence
-        confidence = 1.0
-        if findings:
-            avg_conf = sum(getattr(f, 'confidence', 1.0) for f in findings) / len(findings)
-            confidence = round(avg_conf, 2)
-            
+
         # Calculate Normalized Contributions
         normalized_contributions: Dict[str, float] = {}
         total_category_score = sum(categories_breakdown.values())
@@ -68,24 +58,24 @@ class ScoringEngine:
             for cat, score in categories_breakdown.items():
                 if score > 0:
                     normalized_contributions[cat] = round(score / total_category_score, 2)
-                    
+
         # Sort all findings by effective impact for top findings
         top_findings = sorted(
-            findings, 
-            key=lambda f: self.severity_weights.get(f.severity, 0.0) * getattr(f, 'confidence', 1.0), 
+            findings,
+            key=lambda f: self.severity_weights.get(f.severity, 0.0) * getattr(f, 'confidence', 1.0),
             reverse=True
         )[:5]
-        
+
         return {
             "risk_score": risk_score,
-            "risk_level": decision["risk_level"].upper(),
-            "recommendation": decision["decision"].upper(),
-            "decision": decision["decision"],
-            "reason": decision["reason"],
-            "confidence": confidence,
+            "risk_level": decision_result.risk_level.value.upper(),
+            "decision": decision_result.decision.value,
+            "confidence": decision_result.confidence,
+            "top_risks": decision_result.top_risks,
+            "explanation": decision_result.explanation,
+            "recommendation": decision_result.recommendation,
             "categories": categories_breakdown,
             "normalized_contributions": normalized_contributions,
             "top_findings": top_findings,
             "features": features,
         }
-
