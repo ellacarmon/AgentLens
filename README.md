@@ -28,13 +28,13 @@ pip install .
 You can scan direct remote repositories without installing them locally:
 
 ```bash
-ai-guard scan https://github.com/pallets/flask
+ai-guard scan https://github.com/langchain-ai/langchain
 ```
 
 To integrate into programmatic pipelines (such as a GitHub action or a pre-flight execution check), use `--json`:
 
 ```bash
-ai-guard scan https://github.com/psf/requests --json
+ai-guard scan https://github.com/microsoft/autogen --json
 ```
 
 For pipeline safety, `ai-guard` automatically returns semantic exit codes reflecting the decision engine state:
