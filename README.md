@@ -18,7 +18,7 @@ It forces targeted code to run through a custom static analysis risk scoring mod
 You can install `ai-guard` locally using pip:
 
 ```bash
-git clone https://github.com/agentlens/ai-guard.git
+git clone https://github.com/ellacarmon/ai-guard.git
 cd ai-guard
 pip install .
 ```

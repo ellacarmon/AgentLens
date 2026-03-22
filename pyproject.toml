@@ -25,8 +25,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/agentlens/ai-guard"
-Repository = "https://github.com/agentlens/ai-guard"
+Homepage = "https://github.com/ellacarmon/ai-guard"
+Repository = "https://github.com/ellacarmon/ai-guard"
 
 [project.scripts]
 ai-guard = "ai_guard.cli:main"
