@@ -13,6 +13,7 @@ class FeatureExtractor:
     
     # Map rule_id → primitive boolean features
     FEATURE_RULES = {
+        # --- Existing code execution primitives ---
         "has_dynamic_exec": {
             "type": "bool",
             "match_rules": ["CODE_DYNAMIC_EXECUTION"],
@@ -28,6 +29,32 @@ class FeatureExtractor:
         "has_os_command": {
             "type": "bool",
             "match_rules": ["CODE_OS_SYSTEM"],
+        },
+        # --- Paper: Agent Hijacker patterns (P1, P2, P4) ---
+        "has_instruction_override": {
+            "type": "bool",
+            "match_rules": ["SKILL_INSTRUCTION_OVERRIDE"],
+        },
+        "has_hidden_instructions": {
+            "type": "bool",
+            "match_rules": ["SKILL_HIDDEN_INSTRUCTIONS"],
+        },
+        "has_behavior_manipulation": {
+            "type": "bool",
+            "match_rules": ["SKILL_BEHAVIOR_MANIPULATION"],
+        },
+        # --- Paper: Data Thief patterns (E2, PE3, SC2, SC3) ---
+        "has_credential_harvest": {
+            "type": "bool",
+            "match_rules": ["SKILL_CREDENTIAL_HARVEST", "SKILL_CREDENTIAL_FILE_ACCESS"],
+        },
+        "has_remote_exec": {
+            "type": "bool",
+            "match_rules": ["SKILL_REMOTE_SCRIPT_EXEC"],
+        },
+        "has_obfuscation": {
+            "type": "bool",
+            "match_rules": ["SKILL_OBFUSCATED_CODE", "SC3"],
         },
     }
 
@@ -85,6 +112,14 @@ class FeatureExtractor:
         
         # --- Tier 2: Derived signal strength features ---
         features["execution_type"] = self._derive_execution_type(features, context)
+        
+        # --- Exploitability features ---
+        features["execution_exposed_to_user"] = context.get("execution_exposed_to_user", features["exec_exposed_to_user"])
+        features["input_reaches_sensitive_function"] = context.get("input_reaches_sensitive_function", features.get("has_prompt_injection", False))
+        features["control_flow_reachable"] = context.get("control_flow_reachable", True)
+        features["unsafe_execution_pattern"] = features.get("execution_type") in ["shell_execution", "dynamic_eval"]
+        features["sandbox_presence"] = context.get("sandbox_presence", False)
+
         # Note: maintaining execution_complexity for backward-compatibility with tests / UI if needed,
         # but execution_type is the new driving feature.
         features["execution_complexity"] = self._derive_complexity(
@@ -101,7 +136,33 @@ class FeatureExtractor:
             findings, Category.PROMPT_INJECTION
         )
         features["file_spread"] = self._derive_spread(features)
-        
+
+        # --- Tier 3: Compound archetype fingerprints (paper-derived) ---
+        # Data Thief: E2 + SC2 co-occurrence (paper OR=556, 97.6% sensitivity against factory actors)
+        features["has_data_thief_fingerprint"] = bool(
+            features.get("has_credential_harvest") and features.get("has_remote_exec")
+        )
+
+        # Agent Hijacker: any P1/P2/P4 pattern in skill documentation
+        features["has_agent_hijacker_fingerprint"] = bool(
+            features.get("has_instruction_override")
+            or features.get("has_hidden_instructions")
+            or features.get("has_behavior_manipulation")
+        )
+
+        # High-confidence obfuscation evasion (advanced sophistication — Level 3 in paper)
+        features["has_evasion"] = bool(
+            features.get("has_obfuscation") or features.get("has_hidden_instructions")
+        )
+
+        # Attack archetype classification (mutually exclusive, data thief takes priority)
+        if features["has_data_thief_fingerprint"]:
+            features["attack_archetype"] = "data_thief"
+        elif features["has_agent_hijacker_fingerprint"]:
+            features["attack_archetype"] = "agent_hijacker"
+        else:
+            features["attack_archetype"] = "none"
+
         return features
 
     def _derive_execution_type(self, features: Dict, context: Dict) -> str:

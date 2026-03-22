@@ -32,9 +32,19 @@ feature_scores:
     "injection_signal=strong": 8.0
     "injection_signal=medium": 5.0
     "injection_signal=weak": 2.0
+    # Paper: Agent Hijacker archetype
+    "has_agent_hijacker_fingerprint=True": 8.0
+    "has_instruction_override=True": 7.5
+    "has_hidden_instructions=True": 5.5
+    "has_behavior_manipulation=True": 4.0
 
   supply_chain:
     has_supply_chain_risk: 6.0
+    # Paper: Data Thief archetype fingerprint (E2+SC2)
+    "has_data_thief_fingerprint=True": 9.5
+    "has_credential_harvest=True": 7.0
+    "has_remote_exec=True": 8.0
+    "has_obfuscation=True": 7.0
 
   filesystem_access:
     has_filesystem_access: 4.0

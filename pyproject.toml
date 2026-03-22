@@ -30,3 +30,6 @@ Repository = "https://github.com/ellacarmon/ai-guard"
 
 [project.scripts]
 ai-guard = "ai_guard.cli:main"
+
+[tool.setuptools]
+packages = ["ai_guard"]

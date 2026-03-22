@@ -5,6 +5,7 @@ from ..models.schema import Finding, Category, Severity
 from .normalization import NormalizationLayer
 from .features import FeatureExtractor
 from .decision import DecisionEngine
+from .exploitability import ExploitabilityEngine
 
 
 class ScoringEngine:
@@ -28,6 +29,7 @@ class ScoringEngine:
         feature_scores = config.get('feature_scores', {})
         self.normalization_layer = NormalizationLayer(feature_scores=feature_scores)
         self.decision_engine = DecisionEngine(policy_path=policy_path)
+        self.exploitability_engine = ExploitabilityEngine()
 
     def calculate(self, findings: List[Finding], context: Dict = None) -> Dict:
         if context is None:
@@ -41,13 +43,21 @@ class ScoringEngine:
         categories_breakdown = self.normalization_layer.compute_category_scores(features)
 
         # Step 2: Probabilistic OR aggregation across categories
-        risk_score = self.normalization_layer.aggregate_weighted_scores(categories_breakdown)
+        base_risk_score = self.normalization_layer.aggregate_weighted_scores(categories_breakdown)
 
-        # Step 3: Decision Engine — multi-signal decision with policy
+        # Step 3: Exploitability Engine
+        exploitability = self.exploitability_engine.evaluate(features, findings)
+        
+        # Apply Exploitability Multiplier
+        multiplier = max(0.1, exploitability.exploitability_score / 10.0)
+        risk_score = round(base_risk_score * multiplier, 2)
+
+        # Step 4: Decision Engine — multi-signal decision with policy
         decision_result = self.decision_engine.evaluate(
             risk_score=risk_score,
             categories=categories_breakdown,
             features=features,
+            exploitability=exploitability,
             findings=findings,
         )
 
@@ -78,4 +88,5 @@ class ScoringEngine:
             "normalized_contributions": normalized_contributions,
             "top_findings": top_findings,
             "features": features,
+            "exploitability": exploitability,
         }

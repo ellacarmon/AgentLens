@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 from ..models.schema import (
     DecisionResult, DecisionVerdict, RiskLevel, Category, Finding,
+    ExploitabilityResult, ExploitabilityLevel
 )
 
 
@@ -96,12 +97,26 @@ class DecisionEngine:
         risk_score: float,
         categories: Dict[str, float],
         features: Dict[str, Union[bool, int, str]],
+        exploitability: Optional[ExploitabilityResult] = None,
         findings: Optional[List[Finding]] = None,
     ) -> DecisionResult:
         """
         Run the full decision pipeline and return a structured result.
+        `exploitability` is optional; if not provided a default LOW result is used.
         """
         findings = findings or []
+
+        # Default exploitability when not provided (e.g., in unit tests)
+        if exploitability is None:
+            exploitability = ExploitabilityResult(
+                exploitability_score=0.0,
+                exploitability_level=ExploitabilityLevel.LOW,
+                is_exploitable=False,
+                exposure_detected=False,
+                attack_surface=[],
+                attack_archetype=None,
+                reasoning="No exploitability assessment provided.",
+            )
 
         # 1. Map risk score → risk level
         risk_level = self._map_risk_level(risk_score)
@@ -111,7 +126,7 @@ class DecisionEngine:
 
         # 3. Determine decision (multi-signal chain)
         decision, trigger_reason = self._determine_decision(
-            risk_score, categories, risk_level,
+            risk_score, categories, risk_level, exploitability
         )
 
         # 4. Confidence-based downgrade
@@ -136,6 +151,7 @@ class DecisionEngine:
             top_risks=top_risks,
             explanation=explanation,
             recommendation=recommendation,
+            exploitability=exploitability,
         )
 
     # ------------------------------------------------------------------ #
@@ -215,15 +231,28 @@ class DecisionEngine:
         risk_score: float,
         categories: Dict[str, float],
         risk_level: RiskLevel,
+        exploitability: ExploitabilityResult,
     ) -> Tuple[DecisionVerdict, str]:
         """
         Priority chain:
+          0. Exploitability overrides → block
           1. Combination rules  → block
           2. Category overrides → block / warn
           3. Score thresholds   → block / warn
           4. Risk level default → allow
         Returns (decision, trigger_reason).
         """
+
+        # --- 0. Exploitability Overrides ---
+        if exploitability and exploitability.exploitability_level == ExploitabilityLevel.CRITICAL:
+            has_exec = categories.get(Category.CODE_EXECUTION.value, 0.0) > 0 or categories.get("code_execution", 0.0) > 0
+            has_inj = categories.get(Category.PROMPT_INJECTION.value, 0.0) > 0 or categories.get("prompt_injection", 0.0) > 0
+            
+            if has_exec and has_inj:
+                return DecisionVerdict.BLOCK, "Critical exploitability: Prompt injection combined with execution capability"
+            
+            if has_exec and exploitability.exposure_detected:
+                return DecisionVerdict.BLOCK, "Critical exploitability: Exposed unsafe execution pattern"
 
         # --- 1. Combination rules ---
         combo_result = self._check_combination_rules(categories)

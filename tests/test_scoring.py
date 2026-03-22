@@ -15,7 +15,7 @@ class TestScoringEngine(unittest.TestCase):
         self.assertTrue(result["features"]["has_dynamic_exec"])
         self.assertEqual(result["features"]["execution_complexity"], "critical")
         self.assertEqual(result["categories"]["code_execution"], 8.0)
-        self.assertGreaterEqual(result["risk_score"], 8.0)
+        self.assertGreaterEqual(result["risk_score"], 7.0)
         self.assertIn(result["decision"], ["block"])
         self.assertIn("code execution", result["explanation"])
 

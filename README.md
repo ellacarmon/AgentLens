@@ -51,5 +51,17 @@ ai-guard scan ./local_skill_folder --policy custom_policy.yml
 ## Contributing
 Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on submitting pull requests to the project.
 
+## Research
+
+The archetype-based detection in `ai-guard` (Data Thief and Agent Hijacker) is grounded in:
+
+> **Malicious Agent Skills in the Wild: A Large-Scale Security Empirical Study**  
+> Liu et al., 2026 · [arXiv:2602.06547](https://arxiv.org/abs/2602.06547)
+
+This paper provides the first large-scale empirical study of malicious AI agent skills, confirming 157 malicious skills across 98,380 samples. Key findings that informed our detection model:
+- **84.2%** of vulnerabilities reside in natural-language skill documentation (`SKILL.md`), not executable code.
+- The ecosystem splits into two negatively-correlated archetypes: **Data Thieves** (credential harvest + remote script execution, empirical OR=556) and **Agent Hijackers** (instruction override + autonomy suppression).
+- Advanced attacks use **shadow features** — capabilities present at runtime but absent from public documentation — in 100% of Level 3 (sophisticated) cases.
+
 ## License
 This project is licensed under the **GNU General Public License v3.0** - see the [LICENSE](LICENSE) file for details.

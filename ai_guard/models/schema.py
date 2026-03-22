@@ -26,6 +26,21 @@ class RiskLevel(str, Enum):
     HIGH = "high"
     CRITICAL = "critical"
 
+class ExploitabilityLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+class ExploitabilityResult(BaseModel):
+    exploitability_score: float = Field(ge=0.0, le=10.0)
+    exploitability_level: ExploitabilityLevel
+    is_exploitable: bool
+    exposure_detected: bool
+    attack_surface: List[str] = Field(default_factory=list)
+    attack_archetype: Optional[str] = None  # "data_thief" | "agent_hijacker" | None
+    reasoning: str
+
 class Finding(BaseModel):
     rule_id: str
     category: Category
@@ -45,6 +60,7 @@ class DecisionResult(BaseModel):
     top_risks: List[str] = Field(default_factory=list, description="Top contributing risk categories")
     explanation: str = Field(default="", description="Human-readable explanation of the decision")
     recommendation: str = Field(default="", description="Actionable guidance for the user")
+    exploitability: Optional[ExploitabilityResult] = None
 
 class Report(BaseModel):
     risk_score: float = Field(default=0.0, ge=0.0, le=10.0)
@@ -61,3 +77,4 @@ class Report(BaseModel):
     features: Dict[str, Union[bool, int, str]] = {}
     capabilities: List[str]
     findings: List[Finding]
+    exploitability: Optional[ExploitabilityResult] = None
