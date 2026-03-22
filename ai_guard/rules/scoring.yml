@@ -10,3 +10,25 @@ risk_thresholds:
   medium: 4.0
   high: 7.0
   critical: 9.0
+
+# Feature-driven category scoring
+# Category score = max of all triggered feature scores (not sum)
+feature_scores:
+  code_execution:
+    has_dynamic_exec: 8.0
+    has_shell_exec: 7.0
+    has_os_command: 6.0
+    has_subprocess: 3.0
+
+  prompt_injection:
+    prompt_override_patterns: 5.0
+    prompt_exfil_patterns: 8.0
+
+  supply_chain:
+    has_supply_chain_risk: 6.0
+
+  filesystem_access:
+    has_filesystem_access: 4.0
+
+  network_access:
+    has_network_access: 4.0

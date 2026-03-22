@@ -21,18 +21,15 @@ class ScoringEngine:
             Severity.HIGH: float(weights.get('high', 5.0)),
             Severity.CRITICAL: float(weights.get('critical', 10.0))
         }
-        self.decay_factor = float(config.get('decay_factor', 0.58))
         
         thresholds = config.get('risk_thresholds', {})
         self.thresh_critical = float(thresholds.get('critical', 9.0))
         self.thresh_high = float(thresholds.get('high', 7.0))
         self.thresh_medium = float(thresholds.get('medium', 4.0))
         
-        # Initialize Normalization Layer
-        self.normalization_layer = NormalizationLayer(
-            decay_factor=self.decay_factor,
-            severity_weights=self.severity_weights
-        )
+        # Feature-driven Normalization Layer
+        feature_scores = config.get('feature_scores', {})
+        self.normalization_layer = NormalizationLayer(feature_scores=feature_scores)
         
     def calculate(self, findings: List[Finding]) -> Tuple[float, str, str, float, Dict[str, float], Dict[str, float], List[Finding], Dict]:
         
@@ -40,8 +37,10 @@ class ScoringEngine:
         feature_extractor = FeatureExtractor()
         features = feature_extractor.extract(findings)
         
-        # Step 1 & 2: Normalization Layer - Diminishing returns & Weighted Aggregation
-        categories_breakdown = self.normalization_layer.apply_diminishing_returns(findings)
+        # Step 1: Feature-driven category scoring (quantity-independent)
+        categories_breakdown = self.normalization_layer.compute_category_scores(features)
+
+        # Step 2: Probabilistic OR aggregation across categories
         risk_score = self.normalization_layer.aggregate_weighted_scores(categories_breakdown)
         
         # Step 3: Compute Risk Levels and Recommendations

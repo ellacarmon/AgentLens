@@ -1,48 +1,43 @@
-import math
-from typing import List, Dict
-from ..models.schema import Finding, Category
+from typing import Dict, Union
+
+from ..models.schema import Category
 
 class NormalizationLayer:
     """
-    Applies mathematical normalizations to raw security findings to prevent score saturation:
-    - Caps per Category (max 10.0)
-    - Diminishing Returns (Exponential Decay function)
-    - Weighted Aggregation across disparate categories
+    Feature-driven normalization:
+    - Category score = max of triggered feature scores (not sum of findings)
+    - Caps per category (max 10.0)
+    - Probabilistic OR aggregation across categories
     """
-    def __init__(self, decay_factor: float, severity_weights: Dict[str, float]):
-        self.decay_factor = decay_factor
-        self.severity_weights = severity_weights
+    def __init__(self, feature_scores: Dict[str, Dict[str, float]]):
+        self.feature_scores = feature_scores
 
-    def apply_diminishing_returns(self, findings: List[Finding]) -> Dict[str, float]:
-        """Calculates category scores using geometric decay based on severity sorting."""
+    def compute_category_scores(self, features: Dict[str, Union[bool, int]]) -> Dict[str, float]:
+        """
+        Derive category scores purely from extracted features.
+        
+        For each category, look up which features are active and take the MAX
+        of their configured scores. This makes scoring quantity-independent:
+        1 exec or 50 execs → same category score.
+        """
         categories_breakdown: Dict[str, float] = {cat.value: 0.0 for cat in Category}
         
-        grouped_findings: Dict[Category, List[Finding]] = {cat: [] for cat in Category}
-        for finding in findings:
-            grouped_findings[finding.category].append(finding)
+        for category, feature_map in self.feature_scores.items():
+            triggered_scores = []
+            for feature_key, score_value in feature_map.items():
+                feat_val = features.get(feature_key, False)
+                # Feature is active if bool=True or count > 0
+                if feat_val and feat_val is not False:
+                    triggered_scores.append(float(score_value))
             
-        for cat, cats_findings in grouped_findings.items():
-            # Sort findings by effective impact (highest first)
-            cats_findings.sort(
-                key=lambda f: self.severity_weights.get(f.severity, 0.0) * getattr(f, 'confidence', 1.0),
-                reverse=True
-            )
-            
-            score_c = 0.0
-            for i, f in enumerate(cats_findings):
-                weight = self.severity_weights.get(f.severity, 0.0)
-                impact = weight * getattr(f, 'confidence', 1.0)
+            if triggered_scores:
+                # Max-based: category score = highest triggered feature score
+                categories_breakdown[category] = round(min(10.0, max(triggered_scores)), 2)
                 
-                # Geometric decay: Impact * (decay_factor ^ i)
-                score_c += impact * (self.decay_factor ** i)
-            
-            # Explicit Caps per category
-            categories_breakdown[cat.value] = round(min(10.0, score_c), 2)
-            
         return categories_breakdown
 
     def aggregate_weighted_scores(self, categories_breakdown: Dict[str, float]) -> float:
-        """Weighted aggregation using Probabilistic OR mapped across the category space."""
+        """Weighted aggregation using Probabilistic OR across the category space."""
         p_safe = 1.0
         for score_c in categories_breakdown.values():
             p_safe *= (1.0 - (score_c / 10.0))

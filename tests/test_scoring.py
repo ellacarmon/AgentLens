@@ -6,43 +6,58 @@ class TestScoringEngine(unittest.TestCase):
     def setUp(self):
         self.engine = ScoringEngine()
 
-    def test_single_critical_finding_is_critical_risk(self):
-        # 1 CRITICAL should trigger >= 9.0 (CRITICAL block)
+    def test_single_critical_exec_triggers_high_risk(self):
+        # A single eval() finding should trigger has_dynamic_exec → code_execution: 8.0
         findings = [
-            Finding(rule_id="r1", category=Category.CODE_EXECUTION, severity=Severity.CRITICAL, 
+            Finding(rule_id="CODE_DYNAMIC_EXECUTION", category=Category.CODE_EXECUTION, severity=Severity.CRITICAL, 
                     file_path="f.py", description="eval", confidence=1.0)
         ]
-        risk_score, risk_level, rec, conf, _, _, _, _ = self.engine.calculate(findings)
-        self.assertGreaterEqual(risk_score, 9.0)
-        self.assertEqual(risk_level, "CRITICAL")
+        risk_score, risk_level, rec, conf, cats, _, _, features = self.engine.calculate(findings)
+        self.assertTrue(features["has_dynamic_exec"])
+        self.assertEqual(cats["code_execution"], 8.0)
+        self.assertGreaterEqual(risk_score, 7.0)
+        self.assertIn(risk_level, ["HIGH", "CRITICAL"])
         self.assertEqual(rec, "BLOCK")
-        self.assertEqual(conf, 1.0)
 
-    def test_low_severity_saturation(self):
-        # 100 LOW findings should STILL not exceed 10.0 due to asymptotic decay
-        findings = [
-            Finding(rule_id=f"r{i}", category=Category.CODE_EXECUTION, severity=Severity.LOW, 
-                    file_path="f.py", description="low", confidence=1.0)
-            for i in range(100)
+    def test_quantity_independence(self):
+        # 1 exec finding and 50 exec findings should produce the SAME category score
+        single = [
+            Finding(rule_id="CODE_DYNAMIC_EXECUTION", category=Category.CODE_EXECUTION, severity=Severity.CRITICAL, 
+                    file_path="f.py", description="eval", confidence=1.0)
         ]
-        risk_score, _, _, _, categories, _, _, _ = self.engine.calculate(findings)
-        self.assertLessEqual(risk_score, 10.0)
-        self.assertLessEqual(categories[Category.CODE_EXECUTION.value], 10.0)
+        flood = [
+            Finding(rule_id="CODE_DYNAMIC_EXECUTION", category=Category.CODE_EXECUTION, severity=Severity.CRITICAL, 
+                    file_path=f"f{i}.py", description="eval", confidence=1.0)
+            for i in range(50)
+        ]
+        _, _, _, _, cats_single, _, _, _ = self.engine.calculate(single)
+        _, _, _, _, cats_flood, _, _, _ = self.engine.calculate(flood)
+        self.assertEqual(cats_single["code_execution"], cats_flood["code_execution"])
 
-    def test_mild_findings_yield_medium_risk(self):
-        # 3 MEDIUM findings should trigger MEDIUM risk (>=4.0 and <7.0)
+    def test_subprocess_without_shell_is_low(self):
+        # subprocess without shell=True → has_subprocess → code_execution: 3.0 → LOW
         findings = [
-            Finding(rule_id="r1", category=Category.FILESYSTEM_ACCESS, severity=Severity.MEDIUM, 
-                    file_path="f.py", description="fs", confidence=1.0),
-            Finding(rule_id="r2", category=Category.FILESYSTEM_ACCESS, severity=Severity.MEDIUM, 
-                    file_path="g.py", description="fs", confidence=1.0),
-            Finding(rule_id="r3", category=Category.FILESYSTEM_ACCESS, severity=Severity.MEDIUM, 
-                    file_path="h.py", description="fs", confidence=1.0)
+            Finding(rule_id="CODE_SUBPROCESS", category=Category.CODE_EXECUTION, severity=Severity.MEDIUM, 
+                    file_path="f.py", description="subprocess.run", confidence=1.0)
         ]
-        risk_score, risk_level, rec, _, _, _, _, _ = self.engine.calculate(findings)
-        self.assertGreaterEqual(risk_score, 4.0)
-        self.assertLess(risk_score, 8.0)
-        self.assertIn(risk_level, ["MEDIUM", "HIGH"])
+        risk_score, risk_level, rec, _, cats, _, _, _ = self.engine.calculate(findings)
+        self.assertEqual(cats["code_execution"], 3.0)
+        self.assertEqual(risk_level, "LOW")
+        self.assertEqual(rec, "ALLOW")
+
+    def test_multi_category_aggregation(self):
+        # Exec + prompt injection should combine via probabilistic OR
+        findings = [
+            Finding(rule_id="CODE_SHELL_EXECUTION", category=Category.CODE_EXECUTION, severity=Severity.HIGH, 
+                    file_path="f.py", description="shell", confidence=1.0),
+            Finding(rule_id="PROMPT_INJECTION_EXFIL", category=Category.PROMPT_INJECTION, severity=Severity.CRITICAL, 
+                    file_path="g.md", description="exfil", confidence=1.0),
+        ]
+        risk_score, risk_level, _, _, cats, _, _, _ = self.engine.calculate(findings)
+        self.assertEqual(cats["code_execution"], 7.0)
+        self.assertEqual(cats["prompt_injection"], 8.0)
+        # Combined should be > either individual
+        self.assertGreater(risk_score, 8.0)
 
 if __name__ == '__main__':
     unittest.main()
