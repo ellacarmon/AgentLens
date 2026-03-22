@@ -12,6 +12,7 @@ It forces targeted code to run through a custom static analysis risk scoring mod
 - **Context-Aware Scoring:** Intelligently extracts structural signals (like `is_framework`) to separate high-risk raw execution from safe library runtime internals.
 - **Confidence Scoring:** Validates the strength and ambiguity of risk signals, gracefully downgrading uncertain blocks to warnings.
 - **LLM Semantic Analysis:** Optional second-opinion pass powered by Azure AI Foundry that evaluates the true intent of flagged code snippets, reducing false positives without sacrificing security coverage.
+- **Registry Targets:** Scan packages directly with `npm:<package>` or `pypi:<package>` (downloads are extracted with path-traversal checks on archives).
 - **Output Formats:** Rich CLI formatting (yielding clear human-readable explanations and recommendations), or full `Pydantic`-validated JSON for programmatic aggregation.
 
 ## Installation
@@ -26,10 +27,20 @@ pip install .
 
 ## Usage
 
-You can scan direct remote repositories without installing them locally:
+### Scan targets
+
+- **GitHub:** HTTPS URL to a repository (must be `github.com`).
+- **Local path:** Directory or file on disk.
+- **npm:** `npm:<package>` (e.g. `npm:lodash`) — fetches the latest tarball from the public registry.
+- **PyPI:** `pypi:<package>` (e.g. `pypi:requests`) — prefers an `.tar.gz` sdist, otherwise a `.whl`.
+
+Examples:
 
 ```bash
 ai-guard scan https://github.com/langchain-ai/langchain
+ai-guard scan ./local_skill_folder
+ai-guard scan npm:some-package
+ai-guard scan pypi:some-project
 ```
 
 To integrate into programmatic pipelines (such as a GitHub action or a pre-flight execution check), use `--json`:
@@ -53,7 +64,9 @@ ai-guard scan ./local_skill_folder --policy custom_policy.yml
 
 The static analysis engine is fast and deterministic, but can produce false positives — for example, flagging a legitimate `subprocess` call used for a local math calculation the same way it flags a reverse shell. The semantic analysis layer adds a second-opinion pass that uses an LLM to evaluate the true intent of the flagged code snippet.
 
-When enabled, the hybrid engine runs the static tier first. If the result is `WARN` or `BLOCK` and involves a `code_execution` or `network_access` finding, the LLM is invoked to assess the snippet. A high-confidence `ALLOW` verdict from the LLM overrides the static decision, updating both the final verdict and the recommendation.
+When enabled, the hybrid engine runs the static tier first. If the result is `WARN` or `BLOCK` and there is at least one `code_execution` or `network_access` finding, the LLM is invoked **once per scan** on a small batch of the strongest such findings (up to three), so the model sees a bit of cross-file context instead of a single line in isolation. A high-confidence `ALLOW` verdict from the LLM overrides the static decision, updating both the final verdict and the recommendation.
+
+To print which findings were sent to the model (paths, rules, severities), run the CLI with **verbose** on the top-level command: `ai-guard -v scan ... --semantic`.
 
 ### Setup
 
