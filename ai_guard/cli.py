@@ -57,19 +57,21 @@ def scan(ctx, target, json_output, fail_on_risk, rules_dir, policy, scoring_conf
         # Phase 3: Deterministic Scoring Engine
         from .engines.scoring import ScoringEngine
         scoring_engine = ScoringEngine(config_path=scoring_config)
-        risk_score, risk_level, recommendation, confidence, categories, normalized_conts, top_findings, features = scoring_engine.calculate(findings)
+        result = scoring_engine.calculate(findings)
         
         # Build Report
         mock_report = Report(
-            risk_score=risk_score,
-            risk_level=risk_level,
-            recommendation=recommendation,
-            confidence=confidence,
+            risk_score=result["risk_score"],
+            risk_level=result["risk_level"],
+            recommendation=result["recommendation"],
+            decision=result["decision"],
+            reason=result["reason"],
+            confidence=result["confidence"],
             summary=f"Analysis of {files_count} files complete. Found {len(findings)} risks.",
-            categories=categories,
-            normalized_contributions=normalized_conts,
-            top_findings=top_findings,
-            features=features,
+            categories=result["categories"],
+            normalized_contributions=result["normalized_contributions"],
+            top_findings=result["top_findings"],
+            features=result["features"],
             capabilities=["HOST_EXECUTION"] if len(findings) > 0 else [],
             findings=findings
         )
@@ -85,9 +87,9 @@ def scan(ctx, target, json_output, fail_on_risk, rules_dir, policy, scoring_conf
             click.echo(f"Risk Score: {mock_report.risk_score}/10.0")
             risk_color = "red" if mock_report.risk_level in ["HIGH", "CRITICAL"] else "yellow" if mock_report.risk_level == "MEDIUM" else "green"
             click.echo(f"Risk Level: {click.style(mock_report.risk_level, fg=risk_color, bold=True)}")
-            rec_color = "red" if mock_report.recommendation == "BLOCK" else "yellow" if mock_report.recommendation == "WARN" else "green"
-            click.echo(f"Recommendation: {click.style(mock_report.recommendation, fg=rec_color, bold=True)}")
-            click.echo(f"Summary: {mock_report.summary}")
+            dec_color = "red" if mock_report.decision == "block" else "yellow" if mock_report.decision == "warn" else "green"
+            click.echo(f"Decision: {click.style(mock_report.decision.upper(), fg=dec_color, bold=True)}")
+            click.echo(f"Reason: {mock_report.reason}")
             
             # Print category breakdown if they bear any risk
             active_categories = {k: v for k, v in mock_report.categories.items() if v > 0.0}

@@ -4,6 +4,7 @@ from typing import List, Dict, Tuple
 from ..models.schema import Finding, Category, Severity
 from .normalization import NormalizationLayer
 from .features import FeatureExtractor
+from .decision import DecisionEngine
 
 class ScoringEngine:
     def __init__(self, config_path: str = None):
@@ -30,10 +31,11 @@ class ScoringEngine:
         # Feature-driven Normalization Layer
         feature_scores = config.get('feature_scores', {})
         self.normalization_layer = NormalizationLayer(feature_scores=feature_scores)
+        self.decision_engine = DecisionEngine()
         
-    def calculate(self, findings: List[Finding]) -> Tuple[float, str, str, float, Dict[str, float], Dict[str, float], List[Finding], Dict]:
+    def calculate(self, findings: List[Finding]) -> Dict:
         
-        # Step 0: Feature Abstraction Layer - findings → features
+        # Step 0: Feature Abstraction Layer — findings → features
         feature_extractor = FeatureExtractor()
         features = feature_extractor.extract(findings)
         
@@ -43,19 +45,15 @@ class ScoringEngine:
         # Step 2: Probabilistic OR aggregation across categories
         risk_score = self.normalization_layer.aggregate_weighted_scores(categories_breakdown)
         
-        # Step 3: Compute Risk Levels and Recommendations
-        if risk_score >= self.thresh_critical:
-            risk_level = "CRITICAL"
-            recommendation = "BLOCK"
-        elif risk_score >= self.thresh_high:
-            risk_level = "HIGH"
-            recommendation = "BLOCK"
-        elif risk_score >= self.thresh_medium:
-            risk_level = "MEDIUM"
-            recommendation = "WARN"
-        else:
-            risk_level = "LOW"
-            recommendation = "ALLOW"
+        # Step 3: Decision Layer — risk score + features → decision + reason
+        decision = self.decision_engine.evaluate(
+            risk_score=risk_score,
+            categories=categories_breakdown,
+            features=features,
+            thresh_medium=self.thresh_medium,
+            thresh_high=self.thresh_high,
+            thresh_critical=self.thresh_critical,
+        )
         
         # Calculate Confidence
         confidence = 1.0
@@ -78,4 +76,16 @@ class ScoringEngine:
             reverse=True
         )[:5]
         
-        return risk_score, risk_level, recommendation, confidence, categories_breakdown, normalized_contributions, top_findings, features
+        return {
+            "risk_score": risk_score,
+            "risk_level": decision["risk_level"].upper(),
+            "recommendation": decision["decision"].upper(),
+            "decision": decision["decision"],
+            "reason": decision["reason"],
+            "confidence": confidence,
+            "categories": categories_breakdown,
+            "normalized_contributions": normalized_contributions,
+            "top_findings": top_findings,
+            "features": features,
+        }
+
