@@ -13,6 +13,7 @@ It forces targeted code to run through a custom static analysis risk scoring mod
 - **Confidence Scoring:** Validates the strength and ambiguity of risk signals, gracefully downgrading uncertain blocks to warnings.
 - **LLM Semantic Analysis:** Optional second-opinion pass powered by Azure AI Foundry that evaluates the true intent of flagged code snippets, reducing false positives without sacrificing security coverage.
 - **Registry Targets:** Scan packages directly with `npm:<package>` or `pypi:<package>` (downloads are extracted with path-traversal checks on archives).
+- **JS/TS Guardrails:** JavaScript and TypeScript files are scanned for high-risk execution patterns, and `npm:` packages with JS/TS sources are never treated as clean solely because the Python AST analyzer found nothing.
 - **Output Formats:** Rich CLI formatting (yielding clear human-readable explanations and recommendations), or full `Pydantic`-validated JSON for programmatic aggregation.
 
 ## Installation

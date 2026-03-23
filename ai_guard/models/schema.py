@@ -53,6 +53,46 @@ class Finding(BaseModel):
     evidence: Optional[str] = None
     confidence: float = 1.0
 
+
+class SemanticSampleItem(BaseModel):
+    """One static finding included in the batched semantic (LLM) prompt."""
+
+    file_path: str
+    line_number: Optional[int] = None
+    rule_id: str
+    severity: Severity
+    category: Category
+    injection_score: Optional[float] = Field(
+        default=None,
+        description="Local prompt-injection classifier score (attack prob) when prefilter is enabled",
+    )
+
+
+class SemanticSampleSummary(BaseModel):
+    """How many trigger-category findings existed vs. how many were sent to the LLM."""
+
+    trigger_finding_count: int = Field(
+        ge=0,
+        description="Total code_execution + network_access findings in the scan",
+    )
+    candidate_pool_count: int = Field(
+        default=0,
+        ge=0,
+        description="Trigger findings considered before optional injection prefilter ranking",
+    )
+    prefilter_model: Optional[str] = Field(
+        default=None,
+        description="Hugging Face model id when injection prefilter ranked this batch",
+    )
+    sent_finding_count: int = Field(ge=0)
+    sample_limit: int = Field(ge=1, description="Maximum findings batched per LLM call")
+    unique_file_count: int = Field(
+        ge=0,
+        description="Distinct file_path values in the sent batch",
+    )
+    items: List[SemanticSampleItem] = Field(default_factory=list)
+
+
 class DecisionResult(BaseModel):
     """Structured output of the decision engine."""
     risk_score: float = Field(ge=0.0, le=10.0)
@@ -81,6 +121,7 @@ class Report(BaseModel):
     findings: List[Finding]
     exploitability: Optional[ExploitabilityResult] = None
     semantic_verdict: Optional["SemanticVerdict"] = None
+    semantic_sample: Optional[SemanticSampleSummary] = None
 
 # Resolve forward reference for SemanticVerdict after it is defined in analyzers.semantic
 def _rebuild_report() -> None:

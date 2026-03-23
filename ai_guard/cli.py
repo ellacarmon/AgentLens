@@ -6,6 +6,7 @@ from .models.schema import Report, Severity
 from .core.ingestion import Target, TargetType
 from .core.fetcher import Fetcher
 from .analyzers.ast_code import ASTCodeAnalyzer
+from .analyzers.script_code import ScriptCodeAnalyzer
 from .core.progress import ProgressReporter
 
 
@@ -44,8 +45,32 @@ def main(ctx, verbose):
 @click.option('--semantic', is_flag=True, help='Enable LLM semantic analysis.')
 @click.option('--semantic-model', default='gpt-4o-mini', show_default=True, help='Azure AI Foundry deployment name for semantic analysis.')
 @click.option('--semantic-threshold', type=click.FloatRange(0.0, 1.0), default=0.85, show_default=True, help='Confidence threshold for semantic override.')
+@click.option(
+    '--semantic-prefilter',
+    is_flag=True,
+    help='Rank semantic batch with a local prompt-injection model (requires ai-guard[injection-prefilter]).',
+)
+@click.option(
+    '--semantic-prefilter-model',
+    default='neuralchemy/prompt-injection-deberta',
+    show_default=True,
+    help='Hugging Face model id for --semantic-prefilter.',
+)
 @click.pass_context
-def scan(ctx, target, json_output, fail_on_risk, rules_dir, policy_path, scoring_config, semantic, semantic_model, semantic_threshold):
+def scan(
+    ctx,
+    target,
+    json_output,
+    fail_on_risk,
+    rules_dir,
+    policy_path,
+    scoring_config,
+    semantic,
+    semantic_model,
+    semantic_threshold,
+    semantic_prefilter,
+    semantic_prefilter_model,
+):
     """Scan a target URL, local path, or package."""
     reporter = ProgressReporter(verbose=ctx.obj.get('VERBOSE'))
     current_phase = "init"
@@ -87,21 +112,33 @@ def scan(ctx, target, json_output, fail_on_risk, rules_dir, policy_path, scoring
 
         rule_engine = RuleEngine()
         code_analyzer = ASTCodeAnalyzer(rule_engine=rule_engine)
+        script_analyzer = ScriptCodeAnalyzer()
         prompt_analyzer = PromptAnalyzer(rule_engine=rule_engine)
 
         findings = []
 
         # Code analysis
         py_files_total = sum(1 for _, _, fs in os.walk(staging_path) for f in fs if f.endswith('.py'))
+        script_files_total = sum(
+            1
+            for _, _, fs in os.walk(staging_path)
+            for f in fs
+            if os.path.splitext(f)[1].lower() in ScriptCodeAnalyzer.SCRIPT_EXTENSIONS
+        )
         current_phase = "code-analysis"
-        reporter.phase_start("code-analysis", f"Scanning {py_files_total} Python files...")
+        reporter.phase_start(
+            "code-analysis",
+            f"Scanning {py_files_total} Python files and {script_files_total} JS/TS files...",
+        )
         code_processed = [0]
+        code_total = py_files_total + script_files_total
 
         def code_cb(path, n_findings):
             code_processed[0] += 1
-            reporter.file_progress("code-analysis", code_processed[0], py_files_total, path, n_findings)
+            reporter.file_progress("code-analysis", code_processed[0], code_total, path, n_findings)
 
         findings.extend(code_analyzer.analyze(staging_path, progress_callback=code_cb))
+        findings.extend(script_analyzer.analyze(staging_path, progress_callback=code_cb))
         reporter.progress_done("code-analysis")
         reporter.phase_end("code-analysis")
 
@@ -133,13 +170,31 @@ def scan(ctx, target, json_output, fail_on_risk, rules_dir, policy_path, scoring
                 click.echo(click.style(f"Semantic analysis configuration error: {e}", fg="red"), err=True)
                 sys.exit(4)
 
+            injection_prefilter = None
+            if semantic_prefilter:
+                from .analyzers.injection_prefilter import (
+                    InjectionPrefilterImportError,
+                    PromptInjectionPrefilter,
+                )
+                reporter.phase_start(
+                    "injection-prefilter",
+                    "Loading local prompt-injection classifier (first run may download weights)...",
+                )
+                injection_prefilter = PromptInjectionPrefilter(model_id=semantic_prefilter_model)
+                try:
+                    injection_prefilter.warmup()
+                except InjectionPrefilterImportError as e:
+                    click.echo(click.style(str(e), fg="red"), err=True)
+                    sys.exit(4)
+                reporter.phase_end("injection-prefilter")
+
             # Scoring (inside hybrid)
             current_phase = "scoring"
             reporter.phase_start("scoring", "Calculating risk score...")
             # Semantic analysis
             current_phase = "semantic-analysis"
             reporter.phase_start("semantic-analysis", "Running LLM semantic analysis...")
-            hybrid_engine = HybridEngine(semantic_analyzer)
+            hybrid_engine = HybridEngine(semantic_analyzer, injection_prefilter=injection_prefilter)
             result = hybrid_engine.run(
                 findings,
                 context,
@@ -178,6 +233,7 @@ def scan(ctx, target, json_output, fail_on_risk, rules_dir, policy_path, scoring
             findings=findings
         )
         report.semantic_verdict = result.get("semantic_verdict")
+        report.semantic_sample = result.get("semantic_sample")
 
         # Output rendering
         if json_output:
@@ -199,8 +255,21 @@ def scan(ctx, target, json_output, fail_on_risk, rules_dir, policy_path, scoring
                 click.echo(click.style(f"\nExplanation:", bold=True))
                 click.echo(f"  {report.explanation}")
 
-            if report.semantic_verdict:
+            if report.semantic_verdict or report.semantic_sample:
                 click.echo(click.style("\nSemantic Analysis:", bold=True))
+            if report.semantic_sample:
+                s = report.semantic_sample
+                click.echo(
+                    f"  LLM batch: sent {s.sent_finding_count} of "
+                    f"{s.trigger_finding_count} eligible trigger finding(s) "
+                    f"(limit {s.sample_limit}; {s.unique_file_count} distinct file(s))"
+                )
+                for i, it in enumerate(s.items, start=1):
+                    loc = f"{it.file_path}:{it.line_number}" if it.line_number is not None else it.file_path
+                    click.echo(
+                        f"    {i}. {loc}  [{it.category.value}] {it.rule_id} ({it.severity.value})"
+                    )
+            if report.semantic_verdict:
                 click.echo(f"  Decision: {report.semantic_verdict.decision.value.upper()}")
                 click.echo(f"  Confidence: {report.semantic_verdict.confidence_score:.2f}")
                 click.echo(f"  Explanation: {report.semantic_verdict.explanation}")
