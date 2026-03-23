@@ -1,6 +1,12 @@
 """Tests for semantic batching: top trigger findings sampled for the LLM."""
 
-from ai_guard.engines.hybrid import select_primary_finding, select_top_trigger_findings
+from ai_guard.engines.hybrid import (
+    build_semantic_sample_summary,
+    finding_text_for_injection_classifier,
+    select_findings_for_semantic_llm,
+    select_primary_finding,
+    select_top_trigger_findings,
+)
 from ai_guard.models.schema import Category, Finding, Severity
 
 
@@ -109,6 +115,100 @@ def test_select_primary_is_first_of_batch():
     primary = select_primary_finding([f1, f2])
     assert primary is not None
     assert primary.rule_id == "B"
+
+
+def test_build_semantic_sample_summary_counts():
+    x1 = Finding(
+        rule_id="X",
+        category=Category.CODE_EXECUTION,
+        severity=Severity.CRITICAL,
+        file_path="a.py",
+        line_number=1,
+        description="",
+        evidence="",
+        confidence=1.0,
+    )
+    x2 = Finding(
+        rule_id="X",
+        category=Category.CODE_EXECUTION,
+        severity=Severity.CRITICAL,
+        file_path="a.py",
+        line_number=2,
+        description="",
+        evidence="",
+        confidence=0.9,
+    )
+    noise = Finding(
+        rule_id="P",
+        category=Category.PROMPT_INJECTION,
+        severity=Severity.CRITICAL,
+        file_path="r.md",
+        line_number=1,
+        description="",
+        evidence="",
+        confidence=1.0,
+    )
+    trigger = [f for f in [x1, x2, noise] if f.category in {Category.CODE_EXECUTION, Category.NETWORK_ACCESS}]
+    sample = select_top_trigger_findings([x1, x2, noise], limit=3)
+    summary = build_semantic_sample_summary(trigger, sample)
+    assert summary.trigger_finding_count == 2
+    assert summary.sent_finding_count == len(sample)
+    assert summary.unique_file_count == 1
+    assert len(summary.items) == len(sample)
+
+
+class _FakeInjectionPrefilter:
+    model_id = "test/prompt-injection"
+
+    def __init__(self, scores):
+        self._scores = scores
+
+    def score_texts(self, texts):
+        assert len(texts) == len(self._scores)
+        return list(self._scores)
+
+
+def test_select_findings_for_semantic_llm_prefilter_reorders():
+    """Injection scores reorder which findings win the fixed semantic batch size."""
+    findings = []
+    for letter in "abcd":
+        findings.append(
+            Finding(
+                rule_id="R",
+                category=Category.CODE_EXECUTION,
+                severity=Severity.CRITICAL,
+                file_path=f"{letter}.py",
+                line_number=1,
+                description=letter,
+                evidence=letter,
+                confidence=0.5,
+            )
+        )
+    scores = [0.1, 0.9, 0.2, 0.8]
+    prefilter = _FakeInjectionPrefilter(scores)
+    batch, inj_scores, model_id = select_findings_for_semantic_llm(
+        findings,
+        prefilter=prefilter,
+        sample_size=3,
+        pool_size=10,
+    )
+    assert [f.file_path for f in batch] == ["b.py", "d.py", "c.py"]
+    assert inj_scores == [0.9, 0.8, 0.2]
+    assert model_id == "test/prompt-injection"
+
+
+def test_finding_text_for_injection_classifier_fallback():
+    f = Finding(
+        rule_id="X",
+        category=Category.CODE_EXECUTION,
+        severity=Severity.HIGH,
+        file_path="only/path.py",
+        line_number=1,
+        description="",
+        evidence=None,
+        confidence=1.0,
+    )
+    assert "only/path.py" in finding_text_for_injection_classifier(f)
 
 
 def test_non_trigger_excluded():

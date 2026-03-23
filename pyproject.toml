@@ -25,6 +25,12 @@ classifiers = [
     "Topic :: Security",
 ]
 
+[project.optional-dependencies]
+injection-prefilter = [
+    "transformers>=4.36.0",
+    "torch>=2.0.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/ellacarmon/ai-guard"
 Repository = "https://github.com/ellacarmon/ai-guard"

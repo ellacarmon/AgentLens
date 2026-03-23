@@ -1,15 +1,28 @@
 from __future__ import annotations
 
 import sys
-from typing import Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
-from ..models.schema import Category, Finding, Severity
+from ..models.schema import (
+    Category,
+    Finding,
+    SemanticSampleItem,
+    SemanticSampleSummary,
+    Severity,
+)
 from ..analyzers.semantic import SemanticAnalyzer, SemanticDecision
 from .scoring import ScoringEngine
+
+if TYPE_CHECKING:
+    from ..analyzers.injection_prefilter import PromptInjectionPrefilter
 
 TRIGGER_CATEGORIES = {Category.CODE_EXECUTION, Category.NETWORK_ACCESS}
 
 SEMANTIC_SAMPLE_SIZE = 3
+"""Max findings sent to the Azure semantic LLM per scan."""
+
+SEMANTIC_CANDIDATE_POOL_SIZE = 15
+"""How many top static trigger findings to score with the injection classifier before picking the batch."""
 
 SEVERITY_RANK = {
     Severity.CRITICAL: 4,
@@ -72,6 +85,93 @@ def select_top_trigger_findings(
     return picked
 
 
+def finding_text_for_injection_classifier(finding: Finding) -> str:
+    """Text passed to the local injection model (description + evidence, truncated)."""
+    parts = [finding.description or "", finding.evidence or ""]
+    text = "\n".join(p for p in parts if p).strip()
+    if not text:
+        text = finding.file_path or " "
+    return text[:4000]
+
+
+def select_findings_for_semantic_llm(
+    findings: List[Finding],
+    *,
+    prefilter: Optional["PromptInjectionPrefilter"] = None,
+    sample_size: int = SEMANTIC_SAMPLE_SIZE,
+    pool_size: int = SEMANTIC_CANDIDATE_POOL_SIZE,
+) -> Tuple[List[Finding], List[Optional[float]], Optional[str]]:
+    """Pick findings for the semantic LLM; optionally rank a larger pool by injection score.
+
+    Without ``prefilter``, behavior matches the historical policy: top ``sample_size``
+    trigger findings by static severity/confidence (pool size only affects work done).
+
+    With ``prefilter``, up to ``pool_size`` trigger findings are scored locally; the
+    highest attack-likelihood snippets win the ``sample_size`` slots (ties break on
+    static severity, then confidence) so the cloud LLM focuses on the most ambiguous /
+    adversarial-looking content.
+    """
+    pool = select_top_trigger_findings(findings, limit=pool_size)
+    if not pool:
+        return [], [], None
+
+    model_id: Optional[str] = None
+    if prefilter is None or len(pool) <= sample_size:
+        chosen = pool[:sample_size]
+        scores: List[Optional[float]] = [None] * len(chosen)
+        return chosen, scores, model_id
+
+    try:
+        texts = [finding_text_for_injection_classifier(f) for f in pool]
+        raw_scores = prefilter.score_texts(texts)
+    except Exception as e:
+        print(
+            f"WARNING: Injection prefilter failed ({e}); using static order for semantic batch.",
+            file=sys.stderr,
+        )
+        chosen = pool[:sample_size]
+        return chosen, [None] * len(chosen), None
+
+    model_id = getattr(prefilter, "model_id", None)
+    paired = list(zip(pool, raw_scores))
+    paired.sort(
+        key=lambda p: (-p[1], SEVERITY_RANK[p[0].severity], p[0].confidence),
+    )
+    top = paired[:sample_size]
+    return [p[0] for p in top], [p[1] for p in top], model_id
+
+
+def build_semantic_sample_summary(
+    trigger_findings: List[Finding],
+    sample: List[Finding],
+    *,
+    candidate_pool_count: int = 0,
+    prefilter_model: Optional[str] = None,
+    injection_scores: Optional[List[Optional[float]]] = None,
+) -> SemanticSampleSummary:
+    """Counts eligible trigger findings vs. the batch sent to the semantic analyzer."""
+    inj = injection_scores or [None] * len(sample)
+    return SemanticSampleSummary(
+        trigger_finding_count=len(trigger_findings),
+        candidate_pool_count=candidate_pool_count,
+        prefilter_model=prefilter_model,
+        sent_finding_count=len(sample),
+        sample_limit=SEMANTIC_SAMPLE_SIZE,
+        unique_file_count=len({f.file_path for f in sample}),
+        items=[
+            SemanticSampleItem(
+                file_path=f.file_path,
+                line_number=f.line_number,
+                rule_id=f.rule_id,
+                severity=f.severity,
+                category=f.category,
+                injection_score=inj[i] if i < len(inj) else None,
+            )
+            for i, f in enumerate(sample)
+        ],
+    )
+
+
 def select_primary_finding(findings: List[Finding]) -> Optional[Finding]:
     """Return the single highest-priority trigger-category finding, or None."""
     batch = select_top_trigger_findings(findings, limit=1)
@@ -79,8 +179,13 @@ def select_primary_finding(findings: List[Finding]) -> Optional[Finding]:
 
 
 class HybridEngine:
-    def __init__(self, semantic_analyzer: SemanticAnalyzer):
+    def __init__(
+        self,
+        semantic_analyzer: SemanticAnalyzer,
+        injection_prefilter: Optional["PromptInjectionPrefilter"] = None,
+    ):
         self.semantic_analyzer = semantic_analyzer
+        self.injection_prefilter = injection_prefilter
 
     def run(
         self,
@@ -99,16 +204,35 @@ class HybridEngine:
             return result
 
         # Step 3: Gate — if no trigger-category finding, skip LLM
-        semantic_sample = select_top_trigger_findings(findings)
+        trigger_findings = [f for f in findings if f.category in TRIGGER_CATEGORIES]
+        pool_for_count = select_top_trigger_findings(
+            findings, limit=SEMANTIC_CANDIDATE_POOL_SIZE
+        )
+        semantic_sample, inj_scores, prefilter_model = select_findings_for_semantic_llm(
+            findings,
+            prefilter=self.injection_prefilter,
+            sample_size=SEMANTIC_SAMPLE_SIZE,
+            pool_size=SEMANTIC_CANDIDATE_POOL_SIZE,
+        )
         if not semantic_sample:
             return result
 
+        sample_summary = build_semantic_sample_summary(
+            trigger_findings,
+            semantic_sample,
+            candidate_pool_count=len(pool_for_count),
+            prefilter_model=prefilter_model,
+            injection_scores=inj_scores,
+        )
+
         if debug_log is not None:
-            parts = [
-                f"{f.file_path}:{f.line_number or '?'}"
-                f" rule={f.rule_id} sev={f.severity.value}"
-                for f in semantic_sample
-            ]
+            parts = []
+            for f, s in zip(semantic_sample, inj_scores):
+                extra = f" inj={s:.3f}" if s is not None else ""
+                parts.append(
+                    f"{f.file_path}:{f.line_number or '?'}"
+                    f" rule={f.rule_id} sev={f.severity.value}{extra}"
+                )
             debug_log(
                 "semantic LLM sample: "
                 f"{len(semantic_sample)} finding(s) → " + " | ".join(parts)
@@ -120,6 +244,7 @@ class HybridEngine:
         # Step 5: Handle None verdict (LLM failure)
         if verdict is None:
             print("WARNING: SemanticAnalyzer returned None; using static result.", file=sys.stderr)
+            result["semantic_sample"] = sample_summary
             return result
 
         # Step 6: Apply override logic
@@ -137,7 +262,8 @@ class HybridEngine:
                 "[Semantic Analysis] " + verdict.explanation + " | " + result.get("explanation", "")
             )
 
-        # Step 7: Attach verdict
+        # Step 7: Attach verdict and sample stats (eligible vs. sent, paths)
         result["semantic_verdict"] = verdict
+        result["semantic_sample"] = sample_summary
 
         return result

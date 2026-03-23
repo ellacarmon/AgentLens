@@ -19,6 +19,7 @@ feature_scores:
     "execution_type=dynamic_eval": 8.0
     "execution_type=shell_execution": 7.0
     "execution_type=subprocess": 4.0
+    "execution_type=unreviewed_script_runtime": 5.0
     "execution_type=safe_runtime_execution": 2.0
     "is_framework=True": 0.0
     # Signal strength overrides

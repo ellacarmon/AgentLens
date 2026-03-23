@@ -1,0 +1,53 @@
+import shutil
+import tempfile
+import unittest
+
+from ai_guard.analyzers.script_code import ScriptCodeAnalyzer
+from ai_guard.engines.scoring import ScoringEngine
+
+
+class TestScriptCodeAnalyzer(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir)
+
+    def test_detects_child_process_and_review_required(self):
+        path = f"{self.tmpdir}/index.js"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(
+                "const cp = require('node:child_process');\n"
+                "cp.exec('id');\n"
+            )
+
+        findings = ScriptCodeAnalyzer().analyze(self.tmpdir)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("JS_CHILD_PROCESS", rule_ids)
+        self.assertIn("JS_TS_REVIEW_REQUIRED", rule_ids)
+
+    def test_detects_eval_in_typescript(self):
+        path = f"{self.tmpdir}/index.ts"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("export const run = (src: string) => eval(src);\n")
+
+        findings = ScriptCodeAnalyzer().analyze(self.tmpdir)
+        rule_ids = {finding.rule_id for finding in findings}
+
+        self.assertIn("JS_DYNAMIC_EVAL", rule_ids)
+
+    def test_benign_js_still_requires_review_and_avoids_allow(self):
+        path = f"{self.tmpdir}/index.js"
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("module.exports = function sum(a, b) { return a + b; };\n")
+
+        findings = ScriptCodeAnalyzer().analyze(self.tmpdir)
+        result = ScoringEngine().calculate(findings)
+
+        self.assertEqual(result["features"]["execution_type"], "unreviewed_script_runtime")
+        self.assertEqual(result["decision"], "warn")
+
+
+if __name__ == "__main__":
+    unittest.main()

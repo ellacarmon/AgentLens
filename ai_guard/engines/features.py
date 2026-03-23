@@ -30,6 +30,18 @@ class FeatureExtractor:
             "type": "bool",
             "match_rules": ["CODE_OS_SYSTEM"],
         },
+        "has_js_dynamic_exec": {
+            "type": "bool",
+            "match_rules": ["JS_DYNAMIC_EVAL", "JS_STRING_TIMER_EVAL"],
+        },
+        "has_js_child_process": {
+            "type": "bool",
+            "match_rules": ["JS_CHILD_PROCESS"],
+        },
+        "has_unreviewed_script_runtime": {
+            "type": "bool",
+            "match_rules": ["JS_TS_REVIEW_REQUIRED"],
+        },
         # --- Paper: Agent Hijacker patterns (P1, P2, P4) ---
         "has_instruction_override": {
             "type": "bool",
@@ -70,8 +82,11 @@ class FeatureExtractor:
     # Severity hierarchy for complexity derivation (highest to lowest)
     EXEC_SEVERITY_LADDER = [
         ("has_dynamic_exec", "critical"),   # eval/exec = critical complexity
+        ("has_js_dynamic_exec", "critical"),   # JS eval/Function/string timers
         ("has_shell_exec", "high"),          # shell=True = high complexity
         ("has_os_command", "high"),          # os.system = high complexity
+        ("has_js_child_process", "high"),    # child_process exec/spawn/fork
+        ("has_unreviewed_script_runtime", "high"),  # fail closed on partial runtime coverage
         ("has_subprocess", "low"),           # subprocess(shell=False) = low complexity
     ]
 
@@ -167,12 +182,18 @@ class FeatureExtractor:
 
     def _derive_execution_type(self, features: Dict, context: Dict) -> str:
         base_type = "none"
-        if features.get("has_dynamic_exec"):
+        if features.get("has_dynamic_exec") or features.get("has_js_dynamic_exec"):
             base_type = "dynamic_eval"
-        elif features.get("has_shell_exec") or features.get("has_os_command"):
+        elif (
+            features.get("has_shell_exec")
+            or features.get("has_os_command")
+            or features.get("has_js_child_process")
+        ):
             base_type = "shell_execution"
         elif features.get("has_subprocess"):
             base_type = "subprocess"
+        elif features.get("has_unreviewed_script_runtime"):
+            base_type = "unreviewed_script_runtime"
             
         if base_type != "none":
             if context.get("is_framework", False):
