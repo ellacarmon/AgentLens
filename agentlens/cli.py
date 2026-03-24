@@ -20,6 +20,8 @@ def _fetch_phase_message(target_type: TargetType) -> str:
         return "Fetching package from npm registry..."
     if target_type == TargetType.PYPI_PACKAGE:
         return "Fetching package from PyPI..."
+    if target_type == TargetType.CLAWHUB_SKILL:
+        return "Fetching skill from ClawHub..."
     return "Fetching..."
 
 
@@ -82,7 +84,8 @@ def scan(
         click.echo(
             click.style(
                 f"Error: Unknown target format '{target}'. "
-                "Use a local path, a https://github.com/... URL, npm:<package>[@version], or pypi:<package>[extras][==version].",
+                "Use a local path, a https://github.com/... URL, npm:<package>[@version], "
+                "pypi:<package>[extras][==version], or clawhub:<skill>[@version].",
                 fg="red",
             ),
             err=True,

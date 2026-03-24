@@ -145,6 +145,22 @@ class TestIngestionRegistry(unittest.TestCase):
         self.assertEqual(t.registry_spec, "requests")
         self.assertEqual(t.requested_version, "2.31.0")
 
+    def test_clawhub_target(self):
+        from agentlens.core.ingestion import Target, TargetType
+
+        t = Target("clawhub:calendar-helper")
+        self.assertEqual(t.type, TargetType.CLAWHUB_SKILL)
+        self.assertEqual(t.registry_spec, "calendar-helper")
+        self.assertIsNone(t.requested_version)
+
+    def test_clawhub_versioned_target(self):
+        from agentlens.core.ingestion import Target, TargetType
+
+        t = Target("clawhub:calendar-helper@1.4.2")
+        self.assertEqual(t.type, TargetType.CLAWHUB_SKILL)
+        self.assertEqual(t.registry_spec, "calendar-helper")
+        self.assertEqual(t.requested_version, "1.4.2")
+
     def test_empty_npm_unknown(self):
         from agentlens.core.ingestion import Target, TargetType
 

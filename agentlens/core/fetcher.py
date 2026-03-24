@@ -80,6 +80,9 @@ class Fetcher:
         if self.target.type == TargetType.PYPI_PACKAGE:
             return self._fetch_pypi_registry()
 
+        if self.target.type == TargetType.CLAWHUB_SKILL:
+            return self._fetch_clawhub_registry()
+
         raise ValueError(f"Unsupported target type: {self.target.type}")
 
     def _fetch_npm_registry(self) -> str:
@@ -121,7 +124,7 @@ class Fetcher:
 
         tarball_url = (ver_obj.get("dist") or {}).get("tarball")
         if not tarball_url:
-            raise ValueError(f"npm package {name!r}: no tarball URL for {latest!r}")
+            raise ValueError(f"npm package {name!r}: no tarball URL for {chosen_version!r}")
 
         artifact = os.path.join(staging_path, "package.tgz")
         if self.verbose:
@@ -208,6 +211,55 @@ class Fetcher:
             extract_tar_archive(artifact, staging_path)
         else:
             extract_zip_archive(artifact, staging_path)
+        try:
+            os.remove(artifact)
+        except OSError:
+            pass
+        return staging_path
+
+    def _fetch_clawhub_registry(self) -> str:
+        name = self.target.registry_spec
+        if not name:
+            raise ValueError("ClawHub skill slug missing")
+
+        self.resolved_package_name = name
+        self._temp_dir = tempfile.TemporaryDirectory(prefix="agentlens_")
+        staging_path = self._temp_dir.name
+        encoded = quote(name, safe="")
+        meta_url = f"https://clawhub.ai/api/v1/skills/{encoded}"
+
+        if self.verbose:
+            click.echo(f"VERBOSE: Fetching ClawHub metadata {meta_url}", err=True)
+
+        try:
+            meta = _http_get_json(meta_url)
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                click.echo(
+                    click.style(f"ClawHub skill not found: {name!r}", fg="red"),
+                    err=True,
+                )
+            raise
+
+        latest_version = (meta.get("latestVersion") or {}).get("version")
+        requested_version = self.target.requested_version
+        chosen_version = requested_version or latest_version
+        if not chosen_version:
+            raise ValueError(f"ClawHub skill {name!r} has no latest version")
+        self.resolved_package_version = chosen_version
+
+        artifact = os.path.join(staging_path, "skill.zip")
+        download_url = (
+            f"https://clawhub.ai/api/v1/download?slug={quote(name, safe='')}"
+            f"&version={quote(chosen_version, safe='')}"
+        )
+        if self.verbose:
+            click.echo(
+                f"VERBOSE: Downloading ClawHub skill {name}@{chosen_version}",
+                err=True,
+            )
+        _http_download(download_url, artifact)
+        extract_zip_archive(artifact, staging_path)
         try:
             os.remove(artifact)
         except OSError:

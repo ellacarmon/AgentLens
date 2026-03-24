@@ -9,6 +9,7 @@ class TargetType(Enum):
     LOCAL_PATH = "local_path"
     NPM_PACKAGE = "npm_package"
     PYPI_PACKAGE = "pypi_package"
+    CLAWHUB_SKILL = "clawhub_skill"
     UNKNOWN = "unknown"
 
 
@@ -20,7 +21,7 @@ class Target:
         self.type, self.registry_spec, self.requested_version = self._classify(raw)
 
     def _classify(self, raw: str) -> tuple[TargetType, str | None, str | None]:
-        # Registry prefixes first — do not treat npm:/pypi: as local paths.
+        # Registry prefixes first — do not treat npm:/pypi:/clawhub: as local paths.
         if raw.startswith("npm:"):
             spec = raw[4:].strip()
             if spec:
@@ -36,6 +37,15 @@ class Target:
             package_name, version = self._parse_pypi_spec(spec)
             if package_name:
                 return TargetType.PYPI_PACKAGE, package_name, version
+            return TargetType.UNKNOWN, None, None
+
+        if raw.startswith("clawhub:"):
+            spec = raw[8:].strip()
+            if not spec:
+                return TargetType.UNKNOWN, None, None
+            package_name, version = self._parse_clawhub_spec(spec)
+            if package_name:
+                return TargetType.CLAWHUB_SKILL, package_name, version
             return TargetType.UNKNOWN, None, None
 
         if raw.startswith("http://") or raw.startswith("https://"):
@@ -75,3 +85,16 @@ class Target:
             return None, None
         version = parts[1].strip() if len(parts) == 2 else None
         return package_name, version or None
+
+    @staticmethod
+    def _parse_clawhub_spec(spec: str) -> tuple[str | None, str | None]:
+        spec = spec.strip()
+        if not spec:
+            return None, None
+        if "@" in spec:
+            package_name, version = spec.rsplit("@", maxsplit=1)
+            package_name = package_name.strip()
+            version = version.strip()
+            if package_name and version:
+                return package_name, version
+        return spec, None

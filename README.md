@@ -12,7 +12,7 @@ It forces targeted code to run through a custom static analysis risk scoring mod
 - **Context-Aware Scoring:** Intelligently extracts structural signals (like `is_framework`) to separate high-risk raw execution from safe library runtime internals.
 - **Confidence Scoring:** Validates the strength and ambiguity of risk signals, gracefully downgrading uncertain blocks to warnings.
 - **LLM Semantic Analysis:** Optional second-opinion pass powered by Azure AI Foundry that evaluates the true intent of flagged code snippets, reducing false positives without sacrificing security coverage.
-- **Registry Targets:** Scan packages directly with `npm:<package>` or `pypi:<package>` (downloads are extracted with path-traversal checks on archives).
+- **Registry Targets:** Scan packages directly with `npm:<package>`, `pypi:<package>`, or `clawhub:<skill>` (downloads are extracted with path-traversal checks on archives).
 - **JS/TS Guardrails:** JavaScript and TypeScript files are scanned for high-risk execution patterns, and `npm:` packages with JS/TS sources are never treated as clean solely because the Python AST analyzer found nothing.
 - **Output Formats:** Rich CLI formatting (yielding clear human-readable explanations and recommendations), or full `Pydantic`-validated JSON for programmatic aggregation.
 
@@ -46,6 +46,7 @@ pip install .
 - **Local path:** Directory or file on disk.
 - **npm:** `npm:<package>` (e.g. `npm:lodash`) — fetches the latest tarball from the public registry.
 - **PyPI:** `pypi:<package>` (e.g. `pypi:requests`) — prefers an `.tar.gz` sdist, otherwise a `.whl`.
+- **ClawHub:** `clawhub:<skill>` (e.g. `clawhub:calendar-helper`) — downloads the published skill ZIP from ClawHub's public API.
 
 Examples:
 
@@ -54,6 +55,7 @@ agentlens scan https://github.com/langchain-ai/langchain
 agentlens scan ./local_skill_folder
 agentlens scan npm:some-package
 agentlens scan pypi:some-project
+agentlens scan clawhub:some-skill
 ```
 
 Check the installed CLI version:

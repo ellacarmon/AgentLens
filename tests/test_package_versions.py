@@ -107,3 +107,69 @@ def test_pypi_scan_uses_requested_package_version(monkeypatch, tmp_path):
 
     assert fetcher.resolved_package_name == "requests"
     assert fetcher.resolved_package_version == "2.31.0"
+
+
+def test_clawhub_scan_resolves_skill_version(monkeypatch, tmp_path):
+    target = Target("clawhub:calendar-helper")
+    fetcher = Fetcher(target)
+
+    def fake_http_get_json(url):
+        assert url.endswith("/api/v1/skills/calendar-helper")
+        return {
+            "skill": {"slug": "calendar-helper", "displayName": "Calendar Helper"},
+            "latestVersion": {"version": "1.4.2"},
+        }
+
+    download_calls = []
+
+    def fake_http_download(url, dest):
+        download_calls.append((url, dest))
+        tmp_path.joinpath("clawhub").write_text("x")
+
+    monkeypatch.setattr("agentlens.core.fetcher._http_get_json", fake_http_get_json)
+    monkeypatch.setattr("agentlens.core.fetcher._http_download", fake_http_download)
+    monkeypatch.setattr("agentlens.core.fetcher.extract_zip_archive", lambda artifact, staging: None)
+
+    fetcher._fetch_clawhub_registry()
+
+    assert fetcher.resolved_package_name == "calendar-helper"
+    assert fetcher.resolved_package_version == "1.4.2"
+    assert download_calls == [
+        (
+            "https://clawhub.ai/api/v1/download?slug=calendar-helper&version=1.4.2",
+            download_calls[0][1],
+        )
+    ]
+
+
+def test_clawhub_scan_uses_requested_skill_version(monkeypatch, tmp_path):
+    target = Target("clawhub:calendar-helper@1.2.0")
+    fetcher = Fetcher(target)
+
+    def fake_http_get_json(url):
+        assert url.endswith("/api/v1/skills/calendar-helper")
+        return {
+            "skill": {"slug": "calendar-helper", "displayName": "Calendar Helper"},
+            "latestVersion": {"version": "1.4.2"},
+        }
+
+    download_calls = []
+
+    def fake_http_download(url, dest):
+        download_calls.append((url, dest))
+        tmp_path.joinpath("clawhub-pinned").write_text("x")
+
+    monkeypatch.setattr("agentlens.core.fetcher._http_get_json", fake_http_get_json)
+    monkeypatch.setattr("agentlens.core.fetcher._http_download", fake_http_download)
+    monkeypatch.setattr("agentlens.core.fetcher.extract_zip_archive", lambda artifact, staging: None)
+
+    fetcher._fetch_clawhub_registry()
+
+    assert fetcher.resolved_package_name == "calendar-helper"
+    assert fetcher.resolved_package_version == "1.2.0"
+    assert download_calls == [
+        (
+            "https://clawhub.ai/api/v1/download?slug=calendar-helper&version=1.2.0",
+            download_calls[0][1],
+        )
+    ]
