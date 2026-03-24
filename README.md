@@ -18,7 +18,19 @@ It forces targeted code to run through a custom static analysis risk scoring mod
 
 ## Installation
 
-You can install `AgentLens` locally using pip:
+Install from PyPI:
+
+```bash
+pip install agentlens-scanner
+```
+
+Install with the optional prompt-injection prefilter:
+
+```bash
+pip install "agentlens-scanner[injection]"
+```
+
+Install from source:
 
 ```bash
 git clone https://github.com/ellacarmon/AgentLens.git
@@ -42,6 +54,12 @@ agentlens scan https://github.com/langchain-ai/langchain
 agentlens scan ./local_skill_folder
 agentlens scan npm:some-package
 agentlens scan pypi:some-project
+```
+
+Check the installed CLI version:
+
+```bash
+agentlens --version
 ```
 
 To integrate into programmatic pipelines (such as a GitHub action or a pre-flight execution check), use `--json`:
@@ -104,6 +122,24 @@ Semantic Analysis:
 ```
 
 If the LLM API is unavailable or returns an unparseable response, `AgentLens` degrades gracefully to the static verdict — the scan never fails due to an LLM outage.
+
+## Releasing To PyPI
+
+Build the source distribution and wheel:
+
+```bash
+python -m pip install --upgrade build twine
+python -m build
+twine check dist/*
+```
+
+Upload manually with Twine:
+
+```bash
+python -m twine upload dist/*
+```
+
+For a safer long-term setup, prefer PyPI Trusted Publishing from GitHub Actions instead of storing a long-lived PyPI token in GitHub secrets.
 
 ## Contributing
 Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on submitting pull requests to the project.

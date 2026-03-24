@@ -13,12 +13,14 @@ from .safe_extract import extract_tar_archive, extract_zip_archive
 
 
 def _distribution_version() -> str:
-    try:
-        from importlib.metadata import version
+    from importlib.metadata import PackageNotFoundError, version
 
-        return version("agentlens")
-    except Exception:
-        return "0.1.0"
+    for distribution_name in ("agentlens-scanner", "agentlens"):
+        try:
+            return version(distribution_name)
+        except PackageNotFoundError:
+            continue
+    return "0.1.0"
 
 
 def _http_user_agent() -> str:
