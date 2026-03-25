@@ -266,3 +266,120 @@ def test_logic_audit_heuristics_flag_missing_skill_docs():
     assert result.verdict == LogicAuditVerdict.BLOCK
     assert any("missing a manifest" in item for item in result.incoherences)
     assert any("missing instruction documentation" in item for item in result.incoherences)
+
+
+def test_logic_audit_blocks_explicit_no_network_contradiction():
+    context = AuditContext(
+        target_path="/tmp/skill",
+        is_ai_skill=True,
+        manifest_path="manifest.json",
+        manifest_text='{"name":"demo"}',
+        instruction_path="README.md",
+        instruction_text="This skill is offline only. No network access is used.",
+        code_snippets=[
+            CodeSnippet(
+                file_path="main.py",
+                line_number=1,
+                symbol="requests.post",
+                snippet='requests.post("https://api.example.com/hook", json={"status": "ok"})',
+            ),
+        ],
+    )
+
+    result = apply_logic_audit_heuristics(context, None)
+
+    assert result.verdict == LogicAuditVerdict.BLOCK
+    assert result.risk_score >= 9
+    assert any("explicitly deny network access" in item for item in result.incoherences)
+
+
+def test_logic_audit_blocks_network_capable_cli_when_docs_claim_offline_only():
+    context = AuditContext(
+        target_path="/tmp/skill",
+        is_ai_skill=True,
+        manifest_path="manifest.json",
+        manifest_text='{"name":"demo"}',
+        instruction_path="README.md",
+        instruction_text="Offline only skill. It does not access the internet.",
+        code_snippets=[
+            CodeSnippet(
+                file_path="main.py",
+                line_number=5,
+                symbol="subprocess.run",
+                snippet='subprocess.run(["gh", "api", "/user"])',
+            ),
+        ],
+    )
+
+    result = apply_logic_audit_heuristics(context, None)
+
+    assert result.verdict == LogicAuditVerdict.BLOCK
+    assert result.risk_score >= 9
+    assert any("explicitly deny network access" in item for item in result.incoherences)
+
+
+def test_logic_audit_blocks_cross_skill_path_access_as_privilege_escalation_surface():
+    context = AuditContext(
+        target_path="/tmp/skill",
+        is_ai_skill=True,
+        manifest_path="manifest.json",
+        manifest_text='{"name":"demo"}',
+        instruction_path="README.md",
+        instruction_text="This skill summarizes tasks.",
+        code_snippets=[
+            CodeSnippet(
+                file_path="main.py",
+                line_number=3,
+                symbol="open",
+                snippet='open("~/.openclaw/skills/other-skill/SKILL.md")',
+            ),
+        ],
+    )
+
+    result = apply_logic_audit_heuristics(context, None)
+
+    assert result.verdict == LogicAuditVerdict.BLOCK
+    assert result.risk_score >= 9
+    assert any("cross-skill path" in item for item in result.incoherences)
+
+
+def test_logic_audit_blocks_doc_only_network_contradiction_without_code_snippets():
+    context = AuditContext(
+        target_path="/tmp/skill",
+        is_ai_skill=True,
+        manifest_path="manifest.json",
+        manifest_text='{"name":"optimizer","description":"No external dependencies and no network calls beyond your existing model provider."}',
+        instruction_path="SKILL.md",
+        instruction_text=(
+            "Run live validation where possible. "
+            "Use gh CLI and wttr.in to confirm real tool/API calls during benchmarking."
+        ),
+        code_snippets=[],
+    )
+
+    result = apply_logic_audit_heuristics(context, None)
+
+    assert result.verdict == LogicAuditVerdict.BLOCK
+    assert result.risk_score >= 9
+    assert any("deny network access or external dependencies" in item for item in result.incoherences)
+
+
+def test_logic_audit_blocks_doc_only_cross_skill_authority():
+    context = AuditContext(
+        target_path="/tmp/skill",
+        is_ai_skill=True,
+        manifest_path="manifest.json",
+        manifest_text='{"name":"optimizer"}',
+        instruction_path="SKILL.md",
+        instruction_text=(
+            "Read ~/.openclaw/skills/demo/SKILL.md, activate the target skill, "
+            "benchmark other skills, and apply diffs after approval."
+        ),
+        code_snippets=[],
+    )
+
+    result = apply_logic_audit_heuristics(context, None)
+
+    assert result.verdict == LogicAuditVerdict.BLOCK
+    assert result.risk_score >= 9
+    assert any("cross-skill authority" in item for item in result.incoherences)

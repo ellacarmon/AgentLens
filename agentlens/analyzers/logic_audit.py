@@ -55,6 +55,50 @@ SUBPROCESS_DOC_HINTS = ("subprocess", "shell", "command", "cli", "terminal", "ex
 NETWORK_DOC_HINTS = ("network", "http", "https", "request", "requests", "api call", "fetch", "post", "webhook")
 FILESYSTEM_DOC_HINTS = ("file", "filesystem", "read file", "write file", "local path", "disk", "storage")
 ENV_DOC_HINTS = ("environment", "env var", "api key", "token", "credential", "secret")
+NEGATED_NETWORK_PATTERNS = (
+    re.compile(r"\bno network\b", re.IGNORECASE),
+    re.compile(r"\boffline only\b", re.IGNORECASE),
+    re.compile(r"\bdoes not access the internet\b", re.IGNORECASE),
+    re.compile(r"\bdoes not use the network\b", re.IGNORECASE),
+    re.compile(r"\bwithout network access\b", re.IGNORECASE),
+)
+NETWORK_SUBPROCESS_TOKENS = (
+    "curl ",
+    "wget ",
+    "gh ",
+    "gh api",
+    "git clone",
+    "http://",
+    "https://",
+)
+CROSS_SKILL_PATH_HINTS = (
+    "~/.openclaw/skills/",
+    "/.openclaw/skills/",
+    ".openclaw/skills/",
+    "~/.clawhub/skills/",
+    "/.clawhub/skills/",
+    ".clawhub/skills/",
+)
+DOC_NETWORK_ACTIVITY_PATTERNS = (
+    re.compile(r"\bgh\b", re.IGNORECASE),
+    re.compile(r"\bwttr\.in\b", re.IGNORECASE),
+    re.compile(r"\blive validation\b", re.IGNORECASE),
+    re.compile(r"\breal tool calls?\b", re.IGNORECASE),
+    re.compile(r"\breal api calls?\b", re.IGNORECASE),
+    re.compile(r"\bapi calls?\b", re.IGNORECASE),
+    re.compile(r"https?://", re.IGNORECASE),
+)
+DOC_CROSS_SKILL_PATTERNS = (
+    re.compile(r"~\/\.openclaw\/skills\/", re.IGNORECASE),
+    re.compile(r"\.openclaw\/skills\/", re.IGNORECASE),
+    re.compile(r"\bother skills?\b", re.IGNORECASE),
+    re.compile(r"\btarget skills?\b", re.IGNORECASE),
+    re.compile(r"\bactivate the target skill\b", re.IGNORECASE),
+    re.compile(r"\bapply diffs?\b", re.IGNORECASE),
+    re.compile(r"\bwrite other skills?\b", re.IGNORECASE),
+    re.compile(r"\bread other skills?\b", re.IGNORECASE),
+    re.compile(r"\bbenchmark(?:-driven)? optimi[sz]ation\b", re.IGNORECASE),
+)
 
 
 class LogicAuditConfigError(Exception):
@@ -263,6 +307,37 @@ def _detect_dangerous_instruction_lines(text: str) -> List[str]:
     return matches
 
 
+def _has_negated_capability(text: str, patterns: Iterable[re.Pattern[str]]) -> bool:
+    return any(pattern.search(text or "") for pattern in patterns)
+
+
+def _is_cross_skill_path(path: str) -> bool:
+    lowered = path.lower()
+    return any(hint in lowered for hint in CROSS_SKILL_PATH_HINTS)
+
+
+def _is_network_capable_subprocess(snippet: str) -> bool:
+    lowered = (snippet or "").lower()
+    if any(token in lowered for token in NETWORK_SUBPROCESS_TOKENS):
+        return True
+
+    literals = [value.lower() for value in STRING_LITERAL_PATTERN.findall(snippet)]
+    if not literals:
+        return False
+    joined = " ".join(literals)
+    if any(token in joined for token in ("http://", "https://", "git clone")):
+        return True
+    if "curl" in literals or "wget" in literals:
+        return True
+    if "gh" in literals and "api" in literals:
+        return True
+    return False
+
+
+def _matches_any_pattern(text: str, patterns: Iterable[re.Pattern[str]]) -> bool:
+    return any(pattern.search(text or "") for pattern in patterns)
+
+
 def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").lower()).strip()
 
@@ -302,6 +377,7 @@ def apply_logic_audit_heuristics(
     llm_attempted: bool = False,
 ) -> LogicAuditResult:
     heur_incoherences: List[str] = []
+    critical_incoherences: List[str] = []
     heur_dangerous = _detect_dangerous_instruction_lines(context.instruction_text)
     documented_text = f"{context.manifest_text}\n{context.instruction_text}"
 
@@ -320,6 +396,10 @@ def apply_logic_audit_heuristics(
         )
 
     for path in sorted(_extract_local_paths(context.code_snippets)):
+        if _is_cross_skill_path(path):
+            critical_incoherences.append(
+                f"Code accesses cross-skill path {path}, creating a privilege-escalation surface across installed skills."
+            )
         if path not in documented_text:
             heur_incoherences.append(
                 f"Local path {path} is accessed in code but not documented in manifest/instructions."
@@ -350,6 +430,8 @@ def apply_logic_audit_heuristics(
 
     for snippet in context.code_snippets:
         lowered = snippet.snippet.lower()
+        if snippet.symbol.startswith("subprocess.") and _is_network_capable_subprocess(snippet.snippet):
+            has_network = True
         if snippet.symbol.startswith("subprocess.") and (
             "shell=true" in lowered or "curl " in lowered or "wget " in lowered
         ):
@@ -360,6 +442,27 @@ def apply_logic_audit_heuristics(
             heur_incoherences.append(
                 f"{snippet.file_path}:{snippet.line_number} sends credential-like data over the network."
             )
+
+    if has_network and _has_negated_capability(documented_text, NEGATED_NETWORK_PATTERNS):
+        critical_incoherences.append(
+            "Manifest/instructions explicitly deny network access, but code performs network activity or network-capable CLI calls."
+        )
+
+    manifest_denies_network = _has_negated_capability(context.manifest_text, NEGATED_NETWORK_PATTERNS)
+    instructions_deny_network = _has_negated_capability(context.instruction_text, NEGATED_NETWORK_PATTERNS)
+    instructions_describe_network = _matches_any_pattern(context.instruction_text, DOC_NETWORK_ACTIVITY_PATTERNS)
+    manifest_describes_network = _matches_any_pattern(context.manifest_text, DOC_NETWORK_ACTIVITY_PATTERNS)
+    if (manifest_denies_network or instructions_deny_network) and (
+        instructions_describe_network or manifest_describes_network
+    ):
+        critical_incoherences.append(
+            "Manifest/instructions explicitly deny network access or external dependencies, but the skill documentation describes live network/tool activity."
+        )
+
+    if _matches_any_pattern(documented_text, DOC_CROSS_SKILL_PATTERNS):
+        critical_incoherences.append(
+            "Skill documentation grants cross-skill authority such as reading, benchmarking, activating, or modifying other installed skills."
+        )
 
     if audit is None:
         base = LogicAuditResult(
@@ -376,17 +479,21 @@ def apply_logic_audit_heuristics(
     else:
         base = audit.model_copy(deep=True)
 
-    merged_incoherences = list(dict.fromkeys(base.incoherences + heur_incoherences))
+    merged_incoherences = list(dict.fromkeys(base.incoherences + critical_incoherences + heur_incoherences))
     merged_dangerous = list(dict.fromkeys(base.dangerous_instructions + heur_dangerous))
 
     heuristic_floor = 0
     if merged_incoherences:
         heuristic_floor = max(heuristic_floor, min(9, 5 + len(merged_incoherences)))
+    if critical_incoherences:
+        heuristic_floor = max(heuristic_floor, 9)
     if merged_dangerous:
         heuristic_floor = max(heuristic_floor, min(10, 8 + len(merged_dangerous)))
 
     verdict = base.verdict
     if merged_dangerous:
+        verdict = LogicAuditVerdict.BLOCK
+    elif critical_incoherences:
         verdict = LogicAuditVerdict.BLOCK
     elif len(merged_incoherences) >= 2 and verdict != LogicAuditVerdict.BLOCK:
         verdict = LogicAuditVerdict.BLOCK

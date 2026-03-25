@@ -48,17 +48,40 @@ def _build_sandbox_input(
     }
 
 
+def _logic_audit_explanation(logic_result) -> str:
+    parts = []
+    if logic_result.rationale:
+        parts.append(f"[Logic Audit] {logic_result.rationale}")
+    if logic_result.incoherences:
+        parts.append("Key issue(s): " + "; ".join(logic_result.incoherences[:3]))
+    if logic_result.dangerous_instructions:
+        parts.append(
+            "Dangerous instruction(s): " + "; ".join(logic_result.dangerous_instructions[:3])
+        )
+    return " ".join(parts).strip()
+
+
+def _logic_audit_recommendation(logic_result) -> str:
+    if logic_result.dangerous_instructions:
+        return "Block pending manual review — the skill instructions include unsafe execution guidance."
+    if logic_result.incoherences:
+        return (
+            "Block pending manual review — contextual audit found material contradictions between the "
+            "manifest, instructions, and observed capabilities."
+        )
+    return "Block pending manual review — contextual audit found unsafe or inconsistent behavior."
+
+
 # Exit code mapping
 EXIT_ALLOW = 0
 EXIT_WARN = 1
 EXIT_BLOCK = 2
 
-@click.group()
+@click.group(help=f"AgentLens v{__version__}: Pre-Installation AI Agent Tool Risk Analyzer")
 @click.option('--verbose', '-v', is_flag=True, help='Enable debug logging.')
 @click.version_option(__version__, '--version', prog_name='agentlens')
 @click.pass_context
 def main(ctx, verbose):
-    """AgentLens: Pre-Installation AI Agent Tool Risk Analyzer"""
     ctx.ensure_object(dict)
     ctx.obj['VERBOSE'] = verbose
 
@@ -289,13 +312,8 @@ def scan(
                         result["risk_level"] = "CRITICAL"
                     elif result["risk_score"] >= 7.0:
                         result["risk_level"] = "HIGH"
-                    if logic_result.rationale:
-                        result["explanation"] = (
-                            "[Logic Audit] " + logic_result.rationale + " | " + result.get("explanation", "")
-                        )
-                    result["recommendation"] = (
-                        "Block pending manual review — contextual audit found cross-file mismatches or unsafe instructions."
-                    )
+                    result["explanation"] = _logic_audit_explanation(logic_result)
+                    result["recommendation"] = _logic_audit_recommendation(logic_result)
                 elif logic_result.rationale:
                     result["explanation"] = (
                         result.get("explanation", "") + " | [Logic Audit] " + logic_result.rationale
