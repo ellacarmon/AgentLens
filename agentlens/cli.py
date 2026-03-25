@@ -51,7 +51,12 @@ def _build_sandbox_input(
 def _logic_audit_explanation(logic_result) -> str:
     parts = []
     if logic_result.rationale:
-        parts.append(f"[Logic Audit] {logic_result.rationale}")
+        rationale = logic_result.rationale.replace(
+            "Logic audit LLM returned no result; using heuristic contextual audit.",
+            "Using heuristic contextual audit.",
+        ).strip()
+        if rationale:
+            parts.append(f"[Logic Audit] {rationale}")
     if logic_result.incoherences:
         parts.append("Key issue(s): " + "; ".join(logic_result.incoherences[:3]))
     if logic_result.dangerous_instructions:
@@ -70,6 +75,40 @@ def _logic_audit_recommendation(logic_result) -> str:
             "manifest, instructions, and observed capabilities."
         )
     return "Block pending manual review — contextual audit found unsafe or inconsistent behavior."
+
+
+def _logic_audit_caution_recommendation(logic_result) -> str:
+    if logic_result.incoherences:
+        return (
+            "Install with caution — contextual audit found documentation or manifest inconsistencies "
+            "that should be reviewed before use."
+        )
+    if logic_result.dangerous_instructions:
+        return "Install with caution — contextual audit surfaced potentially unsafe instructions."
+    return "Install with caution — contextual audit found issues that merit manual review."
+
+
+def _risk_level_for_score(score: float) -> str:
+    if score >= 9.0:
+        return "CRITICAL"
+    if score >= 7.0:
+        return "HIGH"
+    if score >= 4.0:
+        return "MEDIUM"
+    return "LOW"
+
+
+def _logic_audit_confidence(base_confidence: float, logic_result, original_score: float, final_score: float) -> float:
+    confidence = float(base_confidence)
+    if final_score > original_score:
+        confidence = min(confidence, 0.85)
+    if logic_result.incoherences:
+        confidence = min(confidence, 0.8)
+    if logic_result.dangerous_instructions:
+        confidence = min(confidence, 0.75)
+    if logic_result.verdict == LogicAuditVerdict.BLOCK:
+        confidence = min(confidence, 0.9)
+    return round(max(0.0, min(1.0, confidence)), 2)
 
 
 # Exit code mapping
@@ -304,16 +343,23 @@ def scan(
             if logic_result is not None:
                 if reporter.verbose:
                     reporter.debug(f"logic audit: {logic_audit_summary(logic_result)}")
+                original_risk_score = float(result["risk_score"])
                 result["logic_audit"] = logic_result
                 result["risk_score"] = round(max(result["risk_score"], float(logic_result.risk_score)), 2)
+                result["risk_level"] = _risk_level_for_score(result["risk_score"])
+                result["confidence"] = _logic_audit_confidence(
+                    result.get("confidence", 1.0),
+                    logic_result,
+                    original_risk_score,
+                    float(result["risk_score"]),
+                )
                 if logic_result.verdict == LogicAuditVerdict.BLOCK:
                     result["decision"] = "block"
-                    if result["risk_score"] >= 9.0:
-                        result["risk_level"] = "CRITICAL"
-                    elif result["risk_score"] >= 7.0:
-                        result["risk_level"] = "HIGH"
                     result["explanation"] = _logic_audit_explanation(logic_result)
                     result["recommendation"] = _logic_audit_recommendation(logic_result)
+                elif logic_result.incoherences or logic_result.dangerous_instructions:
+                    result["explanation"] = _logic_audit_explanation(logic_result)
+                    result["recommendation"] = _logic_audit_caution_recommendation(logic_result)
                 elif logic_result.rationale:
                     result["explanation"] = (
                         result.get("explanation", "") + " | [Logic Audit] " + logic_result.rationale
