@@ -3,7 +3,7 @@ import json
 import os
 import sys
 from . import __version__
-from .models.schema import Report, Severity
+from .models.schema import LogicAuditVerdict, Report, Severity
 from .core.ingestion import Target, TargetType
 from .core.fetcher import Fetcher
 from .analyzers.ast_code import ASTCodeAnalyzer
@@ -49,6 +49,8 @@ def main(ctx, verbose):
 @click.option('--semantic', is_flag=True, help='Enable LLM semantic analysis.')
 @click.option('--semantic-model', default='gpt-4o-mini', show_default=True, help='Azure AI Foundry deployment name for semantic analysis.')
 @click.option('--semantic-threshold', type=click.FloatRange(0.0, 1.0), default=0.85, show_default=True, help='Confidence threshold for semantic override.')
+@click.option('--logic-audit', is_flag=True, help='Enable contextual cross-file logic auditing.')
+@click.option('--logic-audit-model', default='gpt-4o-mini', show_default=True, help='Azure AI Foundry deployment name for logic audit.')
 @click.option(
     '--semantic-prefilter',
     is_flag=True,
@@ -72,6 +74,8 @@ def scan(
     semantic,
     semantic_model,
     semantic_threshold,
+    logic_audit,
+    logic_audit_model,
     semantic_prefilter,
     semantic_prefilter_model,
 ):
@@ -224,6 +228,54 @@ def scan(
             result = scoring_engine.calculate(findings, context=context)
             reporter.phase_end("scoring")
 
+        should_run_logic_audit = bool(
+            logic_audit
+            or target_obj.type == TargetType.CLAWHUB_SKILL
+            or context.get("is_ai_skill")
+        )
+        if should_run_logic_audit:
+            from .analyzers.logic_audit import (
+                LogicAuditConfigError,
+                LogicAuditor,
+                build_audit_context,
+                logic_audit_summary,
+            )
+
+            current_phase = "logic-audit"
+            reporter.phase_start("logic-audit", "Running contextual cross-file logic audit...")
+            audit_context = build_audit_context(staging_path)
+            try:
+                logic_auditor = LogicAuditor(model=logic_audit_model)
+            except LogicAuditConfigError as e:
+                click.echo(click.style(f"Logic audit configuration error: {e}", fg="red"), err=True)
+                sys.exit(4)
+
+            logic_result = logic_auditor.audit_logic(audit_context)
+            reporter.phase_end("logic-audit")
+
+            if logic_result is not None:
+                if reporter.verbose:
+                    reporter.debug(f"logic audit: {logic_audit_summary(logic_result)}")
+                result["logic_audit"] = logic_result
+                result["risk_score"] = round(max(result["risk_score"], float(logic_result.risk_score)), 2)
+                if logic_result.verdict == LogicAuditVerdict.BLOCK:
+                    result["decision"] = "block"
+                    if result["risk_score"] >= 9.0:
+                        result["risk_level"] = "CRITICAL"
+                    elif result["risk_score"] >= 7.0:
+                        result["risk_level"] = "HIGH"
+                    if logic_result.rationale:
+                        result["explanation"] = (
+                            "[Logic Audit] " + logic_result.rationale + " | " + result.get("explanation", "")
+                        )
+                    result["recommendation"] = (
+                        "Block pending manual review — contextual audit found cross-file mismatches or unsafe instructions."
+                    )
+                elif logic_result.rationale:
+                    result["explanation"] = (
+                        result.get("explanation", "") + " | [Logic Audit] " + logic_result.rationale
+                    ).strip(" |")
+
         reporter.summary(files_count, len(findings))
 
         # Build Report
@@ -250,6 +302,7 @@ def scan(
         )
         report.semantic_verdict = result.get("semantic_verdict")
         report.semantic_sample = result.get("semantic_sample")
+        report.logic_audit = result.get("logic_audit")
 
         # Output rendering
         if json_output:
@@ -300,6 +353,21 @@ def scan(
                 click.echo(f"  Confidence: {report.semantic_verdict.confidence_score:.2f}")
                 click.echo(f"  Explanation: {report.semantic_verdict.explanation}")
                 click.echo(f"  Flagged Pattern: {report.semantic_verdict.flagged_pattern}")
+
+            if report.logic_audit:
+                click.echo(click.style("\nLogic Audit:", bold=True))
+                click.echo(f"  Verdict: {report.logic_audit.verdict.value}")
+                click.echo(f"  Risk Score: {report.logic_audit.risk_score}/10")
+                if report.logic_audit.incoherences:
+                    click.echo("  Incoherences:")
+                    for item in report.logic_audit.incoherences:
+                        click.echo(f"    - {item}")
+                if report.logic_audit.dangerous_instructions:
+                    click.echo("  Dangerous Instructions:")
+                    for item in report.logic_audit.dangerous_instructions:
+                        click.echo(f"    - {item}")
+                if report.logic_audit.rationale:
+                    click.echo(f"  Rationale: {report.logic_audit.rationale}")
 
             # Recommendation
             if report.recommendation:

@@ -1,5 +1,6 @@
 import os
 from typing import Dict, Any
+from .logic_audit import is_ai_skill_path
 
 class ContextAnalyzer:
     """
@@ -11,7 +12,8 @@ class ContextAnalyzer:
         context = {
             "is_framework": False,
             "is_library": False,
-            "exec_exposed_to_user": True
+            "exec_exposed_to_user": True,
+            "is_ai_skill": is_ai_skill_path(target_dir),
         }
         
         # Check for common library/framework indicators

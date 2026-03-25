@@ -22,6 +22,10 @@ class DecisionVerdict(str, Enum):
     WARN = "warn"
     BLOCK = "block"
 
+class LogicAuditVerdict(str, Enum):
+    ALLOW = "ALLOW"
+    BLOCK = "BLOCK"
+
 class RiskLevel(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
@@ -93,6 +97,14 @@ class SemanticSampleSummary(BaseModel):
     items: List[SemanticSampleItem] = Field(default_factory=list)
 
 
+class LogicAuditResult(BaseModel):
+    risk_score: int = Field(ge=0, le=10)
+    incoherences: List[str] = Field(default_factory=list)
+    dangerous_instructions: List[str] = Field(default_factory=list)
+    verdict: LogicAuditVerdict
+    rationale: str = Field(default="")
+
+
 class DecisionResult(BaseModel):
     """Structured output of the decision engine."""
     risk_score: float = Field(ge=0.0, le=10.0)
@@ -127,3 +139,4 @@ class Report(BaseModel):
     exploitability: Optional[ExploitabilityResult] = None
     semantic_verdict: Optional["SemanticVerdict"] = None
     semantic_sample: Optional[SemanticSampleSummary] = None
+    logic_audit: Optional[LogicAuditResult] = None
