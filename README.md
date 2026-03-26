@@ -298,41 +298,6 @@ These scores combine with static analysis findings through probabilistic OR aggr
 - Disabled by default (opt-in with `--behavioral`)
 - Efficient AST parsing with minimal overhead
 
-## Releasing To PyPI
-
-This repository includes an automated publish workflow at `.github/workflows/publish-pypi.yml`.
-
-On every push to `main`, GitHub Actions will:
-
-- derive a unique package version for that commit from the base `major.minor` in `pyproject.toml`
-- run the test suite
-- build the wheel and source distribution
-- validate the artifacts with `twine check`
-- publish to PyPI with Trusted Publishing
-
-The generated version format is:
-
-```txt
-<major>.<minor>.<github_run_number>
-```
-
-If a workflow run is retried, it publishes a unique post-release for that same commit:
-
-```txt
-<major>.<minor>.<github_run_number>.post<N>
-```
-
-### One-time PyPI setup
-
-Configure a Trusted Publisher in PyPI for this repository:
-
-- Owner: your GitHub user or org
-- Repository: `ellacarmon/AgentLens`
-- Workflow name: `publish-pypi.yml`
-- Environment: leave empty unless you later restrict publishing with a GitHub Environment
-
-No long-lived PyPI API token is required when Trusted Publishing is enabled.
-
 ## Contributing
 Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on submitting pull requests to the project.
 
