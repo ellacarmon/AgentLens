@@ -35,10 +35,22 @@ class BehavioralAnalyzer:
     """
     Behavioral analyzer for detecting dynamic code execution, runtime imports,
     and other suspicious patterns that require deeper inspection beyond static AST.
+
+    SECURITY NOTES:
+    - Never executes untrusted code
+    - Validates all archive extractions for path traversal, zip bombs, symlinks
+    - Enforces strict size and file count limits
+    - All analysis is static AST parsing only
     """
 
     # Maximum time for behavioral analysis per file (seconds)
     ANALYSIS_TIMEOUT = 5
+
+    # Archive extraction safety limits
+    MAX_EXTRACTED_SIZE = 500 * 1024 * 1024  # 500MB total extracted size
+    MAX_FILE_COUNT = 10000  # Maximum number of files in archive
+    MAX_SINGLE_FILE_SIZE = 100 * 1024 * 1024  # 100MB per file
+    MAX_COMPRESSION_RATIO = 100  # Alert if compression ratio > 100:1
 
     # Suspicious dynamic import patterns
     DYNAMIC_IMPORT_PATTERNS = {
@@ -151,32 +163,105 @@ class BehavioralAnalyzer:
         """
         Safely unpack a wheel file to a temporary directory.
 
+        Security validations:
+        - Path traversal prevention
+        - Zip bomb detection (size limits + compression ratio)
+        - Symlink detection
+        - File count limits
+
         Args:
             wheel_path: Path to .whl file
 
         Returns:
             Path to unpacked directory
+
+        Raises:
+            BehavioralAnalysisError: If archive is malicious or exceeds safety limits
         """
         temp_dir = tempfile.mkdtemp(prefix="agentlens_behavioral_")
         self._temp_dirs.append(temp_dir)
 
         try:
             with ZipFile(wheel_path, 'r') as zip_ref:
-                # Check for path traversal attacks
-                for member in zip_ref.namelist():
+                members = zip_ref.namelist()
+
+                # Check file count limit
+                if len(members) > self.MAX_FILE_COUNT:
+                    raise BehavioralAnalysisError(
+                        f"Archive contains too many files ({len(members)} > {self.MAX_FILE_COUNT})"
+                    )
+
+                total_size = 0
+                compressed_size = 0
+
+                # Validate all members before extraction
+                for member in members:
+                    # Check path traversal
                     if self._is_path_traversal(member):
                         raise BehavioralAnalysisError(
                             f"Path traversal detected in wheel: {member}"
                         )
 
-                # Safe extraction
-                zip_ref.extractall(temp_dir)
+                    # Check for suspicious filenames
+                    if self._is_suspicious_filename(member):
+                        raise BehavioralAnalysisError(
+                            f"Suspicious filename detected: {member}"
+                        )
+
+                    # Get file info
+                    info = zip_ref.getinfo(member)
+                    file_size = info.file_size
+
+                    # Check single file size
+                    if file_size > self.MAX_SINGLE_FILE_SIZE:
+                        raise BehavioralAnalysisError(
+                            f"File too large: {member} ({file_size} bytes)"
+                        )
+
+                    total_size += file_size
+                    compressed_size += info.compress_size
+
+                # Check total extracted size
+                if total_size > self.MAX_EXTRACTED_SIZE:
+                    raise BehavioralAnalysisError(
+                        f"Archive too large when extracted ({total_size} > {self.MAX_EXTRACTED_SIZE})"
+                    )
+
+                # Check compression ratio (zip bomb detection)
+                if compressed_size > 0:
+                    ratio = total_size / compressed_size
+                    if ratio > self.MAX_COMPRESSION_RATIO:
+                        raise BehavioralAnalysisError(
+                            f"Suspicious compression ratio {ratio:.1f}:1 (possible zip bomb)"
+                        )
+
+                # Safe extraction - extract members individually to check for symlinks
+                for member in members:
+                    # Skip symlinks entirely
+                    info = zip_ref.getinfo(member)
+                    # Check if it's a symlink (external_attr indicates file type on Unix)
+                    if self._is_symlink_zip(info):
+                        logger.warning(f"Skipping symlink in archive: {member}")
+                        continue
+
+                    # Extract to controlled path
+                    target_path = os.path.join(temp_dir, member)
+                    # Double-check resolved path is still within temp_dir
+                    if not os.path.abspath(target_path).startswith(os.path.abspath(temp_dir)):
+                        raise BehavioralAnalysisError(
+                            f"Path escapes temp directory: {member}"
+                        )
+
+                    # Extract this member
+                    zip_ref.extract(member, temp_dir)
 
             if self.verbose:
-                logger.info(f"Unpacked wheel to {temp_dir}")
+                logger.info(f"Unpacked wheel to {temp_dir} ({len(members)} files, {total_size} bytes)")
 
             return temp_dir
 
+        except BehavioralAnalysisError:
+            raise
         except Exception as e:
             logger.error(f"Failed to unpack wheel {wheel_path}: {e}")
             raise BehavioralAnalysisError(f"Wheel unpacking failed: {e}")
@@ -185,32 +270,103 @@ class BehavioralAnalyzer:
         """
         Safely unpack a tarball to a temporary directory.
 
+        Security validations:
+        - Path traversal prevention
+        - Tar bomb detection (size limits + compression ratio)
+        - Symlink detection and skipping
+        - File count limits
+        - Device files and special files blocked
+
         Args:
             tarball_path: Path to .tar.gz file
 
         Returns:
             Path to unpacked directory
+
+        Raises:
+            BehavioralAnalysisError: If archive is malicious or exceeds safety limits
         """
         temp_dir = tempfile.mkdtemp(prefix="agentlens_behavioral_")
         self._temp_dirs.append(temp_dir)
 
         try:
             with tarfile.open(tarball_path, 'r:*') as tar:
-                # Check for path traversal attacks
-                for member in tar.getmembers():
+                members = tar.getmembers()
+
+                # Check file count limit
+                if len(members) > self.MAX_FILE_COUNT:
+                    raise BehavioralAnalysisError(
+                        f"Archive contains too many files ({len(members)} > {self.MAX_FILE_COUNT})"
+                    )
+
+                total_size = 0
+                archive_size = os.path.getsize(tarball_path)
+
+                # Validate all members before extraction
+                safe_members = []
+                for member in members:
+                    # Skip symlinks, devices, and special files
+                    if member.issym() or member.islnk():
+                        logger.warning(f"Skipping symlink in tarball: {member.name}")
+                        continue
+                    if member.isdev() or member.isfifo():
+                        logger.warning(f"Skipping device/special file in tarball: {member.name}")
+                        continue
+
+                    # Check path traversal
                     if self._is_path_traversal(member.name):
                         raise BehavioralAnalysisError(
                             f"Path traversal detected in tarball: {member.name}"
                         )
 
-                # Safe extraction
-                tar.extractall(temp_dir, filter='data')
+                    # Check for suspicious filenames
+                    if self._is_suspicious_filename(member.name):
+                        raise BehavioralAnalysisError(
+                            f"Suspicious filename detected: {member.name}"
+                        )
+
+                    # Check single file size
+                    if member.size > self.MAX_SINGLE_FILE_SIZE:
+                        raise BehavioralAnalysisError(
+                            f"File too large: {member.name} ({member.size} bytes)"
+                        )
+
+                    total_size += member.size
+                    safe_members.append(member)
+
+                # Check total extracted size
+                if total_size > self.MAX_EXTRACTED_SIZE:
+                    raise BehavioralAnalysisError(
+                        f"Archive too large when extracted ({total_size} > {self.MAX_EXTRACTED_SIZE})"
+                    )
+
+                # Check compression ratio (tar bomb detection)
+                if archive_size > 0:
+                    ratio = total_size / archive_size
+                    if ratio > self.MAX_COMPRESSION_RATIO:
+                        raise BehavioralAnalysisError(
+                            f"Suspicious compression ratio {ratio:.1f}:1 (possible tar bomb)"
+                        )
+
+                # Safe extraction - only extract validated members
+                for member in safe_members:
+                    # Double-check resolved path is still within temp_dir
+                    target_path = os.path.join(temp_dir, member.name)
+                    if not os.path.abspath(target_path).startswith(os.path.abspath(temp_dir)):
+                        raise BehavioralAnalysisError(
+                            f"Path escapes temp directory: {member.name}"
+                        )
+
+                    # Extract this member
+                    tar.extract(member, temp_dir, set_attrs=False)  # Don't set ownership/permissions
 
             if self.verbose:
-                logger.info(f"Unpacked tarball to {temp_dir}")
+                logger.info(f"Unpacked tarball to {temp_dir} ({len(safe_members)} files, {total_size} bytes)")
 
             return temp_dir
 
+        except BehavioralAnalysisError:
+            raise
         except Exception as e:
             logger.error(f"Failed to unpack tarball {tarball_path}: {e}")
             raise BehavioralAnalysisError(f"Tarball unpacking failed: {e}")
@@ -229,6 +385,48 @@ class BehavioralAnalyzer:
         # Normalize and check for .. or absolute paths
         normalized = os.path.normpath(path)
         return normalized.startswith('..') or os.path.isabs(normalized)
+
+    @staticmethod
+    def _is_suspicious_filename(filename: str) -> bool:
+        """
+        Check if filename contains suspicious characters or patterns.
+
+        Args:
+            filename: Filename to check
+
+        Returns:
+            True if suspicious
+        """
+        # Check for null bytes
+        if '\x00' in filename:
+            return True
+
+        # Check for control characters
+        if any(ord(c) < 32 for c in filename if c not in '\t\n\r'):
+            return True
+
+        # Check for extremely long names (filesystem DoS)
+        if len(os.path.basename(filename)) > 255:
+            return True
+
+        return False
+
+    @staticmethod
+    def _is_symlink_zip(zip_info: zipfile.ZipInfo) -> bool:
+        """
+        Check if a ZipInfo entry represents a symlink.
+
+        Args:
+            zip_info: ZipInfo object
+
+        Returns:
+            True if entry is a symlink
+        """
+        # On Unix systems, symlinks have external_attr with S_IFLNK set
+        # external_attr format: high 16 bits = Unix permissions
+        unix_mode = zip_info.external_attr >> 16
+        import stat
+        return stat.S_ISLNK(unix_mode) if unix_mode else False
 
     def _detect_dynamic_imports(self, target_path: str) -> List[Finding]:
         """

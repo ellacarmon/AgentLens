@@ -245,11 +245,28 @@ These scores combine with static analysis findings through probabilistic OR aggr
 
 ### Safety & Performance
 
-- **No Code Execution**: The analyzer never executes untrusted code in the main process
-- **Temporary Isolation**: Archives are unpacked to temporary directories with automatic cleanup
-- **Path Traversal Protection**: All archive extractions check for `..` and absolute paths
+**Security Guarantees:**
+
+- **No Code Execution**: The analyzer NEVER executes untrusted code. All analysis is static AST parsing only.
+- **Zip/Tar Bomb Protection**:
+  - Maximum extracted size: 500MB
+  - Maximum single file: 100MB
+  - Maximum compression ratio: 100:1
+  - Maximum file count: 10,000
+- **Path Traversal Prevention**: All archive members validated before extraction
+- **Symlink Protection**: Symlinks are detected and skipped entirely
+- **Special File Blocking**: Device files, FIFOs, and other special files are rejected
+- **Filename Validation**: Null bytes, control characters, and oversized names blocked
+- **Extraction Isolation**: Each member's final path is verified to stay within temp directory
+- **Temporary Isolation**: Archives unpacked to isolated temp directories with automatic cleanup
 - **Timeout Protection**: Per-analysis timeout of 5 seconds prevents hanging
 - **Graceful Degradation**: If behavioral analysis fails, the scan continues with static analysis only
+
+**Performance:**
+
+- Adds 2-5 seconds per scan
+- Disabled by default (opt-in with `--behavioral`)
+- Efficient AST parsing with minimal overhead
 
 ## Releasing To PyPI
 

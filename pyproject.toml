@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentlens-scanner"
-version = "0.1.5"
+version = "0.1.6"
 description = "Pre-Installation AI Agent Tool Risk Analyzer"
 dependencies = [
     "click>=8.1.7",
@@ -55,4 +55,4 @@ agentlens = "agentlens.cli:main"
 include = ["agentlens*"]
 
 [tool.setuptools.package-data]
-agentlens = ["rules/*.yml"]
+agentlens = ["rules/*.yml", "rules/*.yaml"]
