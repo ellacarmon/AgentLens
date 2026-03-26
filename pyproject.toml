@@ -8,7 +8,6 @@ version = "0.1.6"
 description = "Pre-Installation AI Agent Tool Risk Analyzer"
 dependencies = [
     "click>=8.1.7",
-    "openai>=1.0.0",
     "pydantic>=2.7.0",
     "pyyaml>=6.0.1",
     "requests>=2.31.0",
@@ -28,6 +27,18 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+# LLM backends (choose one or more)
+azure = [
+    "openai>=1.0.0",
+]
+local-semantic = [
+    "sentence-transformers>=2.0.0",
+]
+ollama = [
+    "ollama-python>=0.1.0",
+]
+
+# Legacy aliases
 injection = [
     "transformers>=4.36.0",
     "torch>=2.0.0",
@@ -42,6 +53,12 @@ injection-prefilter = [
     "transformers>=4.36.0",
     "torch>=2.0.0",
     "safetensors>=0.4.0",
+]
+
+# All LLM features
+all-llm = [
+    "openai>=1.0.0",
+    "sentence-transformers>=2.0.0",
 ]
 
 [project.urls]

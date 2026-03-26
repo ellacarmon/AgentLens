@@ -19,24 +19,54 @@ It forces targeted code to run through a custom static analysis risk scoring mod
 
 ## Installation
 
-Install from PyPI:
+### Core Scanner (Static Analysis Only)
 
 ```bash
 pip install agentlens-scanner
 ```
 
-Install with the optional prompt-injection prefilter:
+This provides fast, deterministic scanning with no external dependencies. Perfect for CI/CD pipelines.
 
+### With LLM Features (Optional)
+
+Choose your LLM backend based on your needs:
+
+#### Azure OpenAI (Cloud)
+```bash
+pip install "agentlens-scanner[azure]"
+```
+**Best for**: High-quality analysis, cloud environments
+**Requires**: Azure OpenAI API key
+**Cost**: ~$0.001 per scan
+
+#### Local Semantic Analysis (Offline)
+```bash
+pip install "agentlens-scanner[local-semantic]"
+```
+**Best for**: Offline environments, privacy-sensitive scans, cost reduction
+**Requires**: ~200MB model download (first run)
+**Cost**: Free
+
+#### All LLM Backends
+```bash
+pip install "agentlens-scanner[all-llm]"
+```
+
+### Legacy Options
+
+Prompt-injection prefilter:
 ```bash
 pip install "agentlens-scanner[injection]"
 ```
 
-Install from source:
+### Install from Source
 
 ```bash
 git clone https://github.com/ellacarmon/AgentLens.git
 cd AgentLens
-pip install .
+pip install .  # Core only
+pip install ".[azure]"  # With Azure OpenAI
+pip install ".[local-semantic]"  # With local models
 ```
 
 ## Usage
